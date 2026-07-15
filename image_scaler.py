@@ -1,0 +1,207 @@
+#素材缩放模块
+#把 language/<语言>/<语言>_1280x720 里的 720p 模板按倍率放大到其它分辨率的 pack。
+#只依赖标准库，不依赖 PySide6，方便单独测试，和 language_switcher.py 保持一致。
+#
+#实际缩放用 tools/ImageMagick/magick.exe。便携版 magick 找不到 coder 模块时会报
+#CoderModulesPath / no decode delegate，必须先把 MAGICK_HOME、模块路径、PATH 指向
+#tools/ImageMagick 才能用，所以这里给子进程单独构造环境变量，不污染主进程。
+#
+#支持 1.5x（1920x1080）、2x（2560x1440）、3x（3840x2160）。
+#1.5x 是非整数倍，magick 会做重采样插值，模板会比整数倍略糊、匹配稳定性稍降，
+#但总比 1920x1080 这个 pack 一直空着没法用强。
+#mogrify 的 -path 会把子目录拍平，破坏 <dirpath>_N.png 的分组结构，
+#所以这里逐张用 magick convert，保留源 pack 的子目录结构写到目标 pack。
+#
+#目标里已存在的同名文件会跳过，只补齐缺失的：这样反复点"刷新列表"不会重复处理。
+#想强制重新生成某个分辨率的 pack，把对应文件夹删空再刷新即可。
+
+import os
+import sys
+import stat
+import subprocess
+
+SOURCE_RES = "1280x720"   #720p 是唯一的标准源，所有放大都从它派生
+SOURCE_W = 1280
+SOURCE_H = 720
+#和 image.bash 一致的扩展名
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+
+
+def base_dir():
+    #与 main.py / language_switcher.py 的 get_executable_directory 逻辑一致
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+BASE_DIR = base_dir()
+LANGUAGE_DIR = os.path.join(BASE_DIR, "language")
+MAGICK_EXE = os.path.join(BASE_DIR, "tools", "ImageMagick", "magick.exe")
+
+
+#-----------基础工具-----------
+
+def _magick_cmd():
+    """
+    返回 (命令前缀列表, 子进程环境变量)。
+    优先用打包进 tools/ 的 magick.exe（并配好便携版必需的环境变量）；
+    找不到就退回到 PATH 里的 magick，环境变量不改（系统安装版自己能跑）。
+    """
+    if os.path.isfile(MAGICK_EXE):
+        imdir = os.path.dirname(MAGICK_EXE)
+        env = os.environ.copy()
+        env["MAGICK_HOME"] = imdir
+        env["MAGICK_CONFIGURE_PATH"] = imdir
+        env["MAGICK_CODER_MODULE_PATH"] = os.path.join(imdir, "modules", "coders")
+        env["MAGICK_FILTER_MODULE_PATH"] = os.path.join(imdir, "modules", "filters")
+        env["PATH"] = imdir + os.pathsep + env.get("PATH", "")
+        return [MAGICK_EXE], env
+    return ["magick"], os.environ.copy()
+
+
+def _run_magick(src, dst, factor):
+    #magick <src> -resize N00% <dst>，按倍率放大且宽高比不变；:g 去掉 1.5x 的 ".0"
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    prefix, env = _magick_cmd()
+    cmd = prefix + [src, "-resize", f"{factor * 100:g}%", dst]
+    subprocess.run(
+        cmd,
+        check=True,
+        capture_output=True,
+        env=env,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+
+
+def _is_reparse(path):
+    #判断 path 是不是 junction/符号链接（reparse point），和 language_switcher._is_link 一致
+    try:
+        if os.path.islink(path):
+            return True
+    except OSError:
+        pass
+    try:
+        st = os.lstat(path)
+        if getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            return True
+    except (OSError, AttributeError):
+        pass
+    return False
+
+
+def _walk_images(root):
+    #枚举 root 下所有图片，返回 (绝对路径, 相对 root 的相对路径)
+    #不跟随 junction/符号链接：避免把 aim 联接当模板、也防止循环联接造成 os.walk 死循环
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if not _is_reparse(os.path.join(dirpath, d))]
+        for f in files:
+            if f.lower().endswith(IMAGE_EXTS):
+                full = os.path.join(dirpath, f)
+                rel = os.path.relpath(full, root)
+                yield full, rel
+
+
+#-----------对外功能-----------
+
+def scale_factor(res):
+    """
+    给定分辨率字符串（如 '2560x1440'），返回相对 720p 的缩放倍数。
+    支持 1.5x（1920x1080）、2x（2560x1440）、3x（3840x2160）；
+    比例不是 16:9、或就是 720p 本身，都返回 None。
+    """
+    try:
+        w_s, h_s = res.lower().split("x")
+        w, h = int(w_s), int(h_s)
+    except Exception:
+        return None
+    factor = w / SOURCE_W
+    #高度必须按同样倍数缩放（16:9 一致），用 round 容错浮点
+    if round(h / SOURCE_H, 4) != round(factor, 4):
+        return None
+    if factor <= 1:                 #1x 就是 720p 自己，不需要缩放
+        return None
+    if factor == int(factor):       #整数倍（2、3、...）直接返回 int
+        return int(factor)
+    if abs(factor - 1.5) < 1e-9:    #1.5 倍（1920x1080）
+        return 1.5
+    return None                     #其它非整数倍不支持，避免严重失真
+
+
+def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None):
+    """
+    把某个语言的 720p pack 按倍率放大到该语言下所有可缩放的分辨率 pack。
+    目标里已存在的同名文件会跳过，只补齐缺失的。
+    返回 (生成张数, 跳过张数, 详情列表)。
+    """
+    src_dir = os.path.join(LANGUAGE_DIR, lang, f"{lang}_{src_res}")
+    if not os.path.isdir(src_dir):
+        return 0, 0, [f"{lang} 没有 {src_res} 源 pack，跳过"]
+
+    generated = 0
+    skipped = 0
+    notes = []
+    lang_dir = os.path.join(LANGUAGE_DIR, lang)
+    for name in sorted(os.listdir(lang_dir)):
+        prefix = lang + "_"
+        if not name.startswith(prefix):
+            continue
+        res = name[len(prefix):]
+        factor = scale_factor(res)
+        if factor is None:
+            continue   #不支持该倍率（含 720p 自己）就跳过，不报错
+        dst_dir = os.path.join(lang_dir, name)
+        if progress_cb:
+            progress_cb(f"开始缩放 {lang} {res} {factor}x ...")
+        for src_full, rel in _walk_images(src_dir):
+            dst_full = os.path.join(dst_dir, rel)
+            if os.path.exists(dst_full):
+                skipped += 1
+                continue
+            try:
+                _run_magick(src_full, dst_full, factor)
+                generated += 1
+            except subprocess.CalledProcessError as e:
+                err = e.stderr.decode("mbcs", "ignore") if e.stderr else str(e)
+                notes.append(f"失败 {lang} {res} {rel}: {err.strip()}")
+            except Exception as e:
+                notes.append(f"失败 {lang} {res} {rel}: {e}")
+        notes.append(f"{lang} {res} {factor}x 完成")
+    return generated, skipped, notes
+
+
+def scale_all(progress_cb=None):
+    """
+    扫描 language/ 下所有语言，把每个语言的 720p 模板按倍率放大到对应分辨率。
+    返回一句话总结，供日志框显示。
+    """
+    if not os.path.isfile(MAGICK_EXE):
+        msg = f"没找到 ImageMagick ({MAGICK_EXE})，跳过素材缩放"
+        if progress_cb:
+            progress_cb(msg)
+        return msg
+    if not os.path.isdir(LANGUAGE_DIR):
+        return "language/ 不存在，跳过素材缩放"
+
+    total_gen = 0
+    total_skip = 0
+    all_notes = []
+    for lang in sorted(os.listdir(LANGUAGE_DIR)):
+        lang_dir = os.path.join(LANGUAGE_DIR, lang)
+        if not os.path.isdir(lang_dir):
+            continue
+        g, s, notes = scale_pack(lang, progress_cb=progress_cb)
+        total_gen += g
+        total_skip += s
+        all_notes.extend(notes)
+
+    summary = f"素材缩放完成: 新生成 {total_gen} 张，已存在跳过 {total_skip} 张"
+    for n in all_notes:
+        summary += "\n  " + n
+    return summary
+
+
+if __name__ == "__main__":
+    #单独运行时直接缩放一次，方便排查
+    print("BASE_DIR:", BASE_DIR)
+    print("MAGICK_EXE:", MAGICK_EXE, "存在:", os.path.isfile(MAGICK_EXE))
+    print(scale_all(progress_cb=lambda s: print(s)))

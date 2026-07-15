@@ -1,0 +1,11 @@
+#Python 字节码缓存，不入库
+__pycache__/
+*.pyc
+
+#aim 是运行时由 language_switcher.ensure_active() 创建的 Windows 目录联接，
+#指向 language/<语言>/<语言>_<分辨率>/ 里的某个真实 pack，不应入库
+aim/
+
+#运行时记录当前语言/分辨率选择，每次切换都会改写，不入库
+language/active.json
+
