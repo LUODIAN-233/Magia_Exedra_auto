@@ -1,18 +1,16 @@
 <div align="center">
-
-[简体中文](./README.md) · [English](./README_EN.md) · [日本語](./README_JP.md)
-
-# Magia Exedra 自动挂机
-
-基于图像识别的 **Magia Exedra**（圆哆啦）Windows 游戏自动化脚本
-
-支持 Link Raid 与晶花双模式自动挂机，附语言/分辨率切换与素材自动缩放
-
-![Platform](https://img.shields.io/badge/平台-Windows-blue)
-![Python](https://img.shields.io/badge/Python-3.x-blue)
-![Qt](https://img.shields.io/badge/GUI-PySide6-green)
-![License](https://img.shields.io/badge/用途-游戏辅助-orange)
-
+  <h1>Magia Exedra 自动挂机</h1>
+  <p>基于图像识别的 <strong>Magia Exedra</strong> Windows 游戏自动化脚本</p>
+  <p>支持 Link Raid 与晶花双模式自动挂机，附语言/分辨率切换与素材自动缩放</p>
+  <p>
+    <img alt="Platform" src="https://img.shields.io/badge/平台-Windows-blue">
+    <img alt="Python" src="https://img.shields.io/badge/Python-3.x-blue">
+    <img alt="Qt" src="https://img.shields.io/badge/GUI-PySide6-green">
+    <img alt="License" src="https://img.shields.io/badge/用途-游戏辅助-orange">
+  </p>
+  <p>
+    <a href="./README.md">简体中文</a> · <a href="./README_EN.md">English</a> · <a href="./README_JP.md">日本語</a>
+  </p>
 </div>
 
 ---
@@ -43,7 +41,7 @@
 - 启动时自动将游戏窗口置前
 - 停止按钮可随时中断任意挂机任务
 - 语言 / 分辨率切换（支持英语、日语，多分辨率素材自动缩放）
-- 720p 原生素材一键缩放至 1080p / 1440p / 4K
+- 2K 原生素材一键缩放至 720p / 1080p / 4K
 
 ---
 
@@ -69,9 +67,9 @@ main.py（GUI + 工作线程）
    ├── WorkThread_2 ──► click_action ──► click_behavior ──► 游戏
    │   (晶花)
    │
-   └── LanguageSwitcherWidget
-         ├── language_switcher（junction 管理）
-         └── image_scaler（720p → 高分辨率）
+    └── LanguageSwitcherWidget
+          ├── language_switcher（junction 管理）
+          └── image_scaler（2K → 其他分辨率）
 ```
 
 ---
@@ -132,14 +130,15 @@ pyinstaller -D -i resource/main.ico main.py
 
 ### 4. 刷新列表
 
-将 720p 原生素材自动缩放到其他分辨率：
+将 2K（2560×1440）原生素材自动缩放到其他分辨率：
 
 | 源分辨率 | → 缩放目标 | 倍率 |
 |:--------:|:----------:|:----:|
-| 1280×720 | 1920×1080 | 1.5x |
-| 1280×720 | 2560×1440 | 2x |
-| 1280×720 | 3840×2160 | 3x |
+| 2560×1440 | 1280×720 | 0.5x（下采样）|
+| 2560×1440 | 1920×1080 | 0.75x（下采样）|
+| 2560×1440 | 3840×2160 | 1.5x（上采样）|
 
+> 720p / 1080p 为下采样，质量良好；4K 为上采样（非整数倍重采样），模板略糊。
 > 已存在的目标文件会跳过；删除某个目标文件即可强制重新生成。
 
 ---
@@ -147,9 +146,8 @@ pyinstaller -D -i resource/main.ico main.py
 ## 注意事项
 
 - **游戏窗口必须在最前面**，挂机软件可以在后台（被其他窗口遮挡不影响）
-- Link Raid 的首次点击使用**硬编码坐标**（`1000,500` → `1200,600`），仅 1280×720 分辨率下正常
-- 切换分辨率后 Link Raid 的首次点击需手动调整（点击右下角）
-- 游戏需以 **16:9** 窗口化运行，且模板语言需与游戏语言一致
+- Link Raid 的首次点击使用**硬编码坐标**（`2000,1000` → `2400,1200`，2K 基准），会按当前激活分辨率自动缩放，720p / 1080p / 2K / 4K 均可正常使用
+- 游戏需以 **16:9** 窗口化运行，且模板的语言与分辨率需与游戏一致
 - JP 服务器可在游戏内切换至 EN，从而复用英语模板，无需重新截图
 
 ---
@@ -162,12 +160,12 @@ Magia_Exedra_auto/
 ├── click_action.py          # 高级点击动作（模板迭代、坐标点击、拖拽）
 ├── click_behavior.py        # 低级操作（截图、匹配、点击、窗口聚焦）
 ├── language_switcher.py     # 语言/分辨率切换（junction 管理）
-├── image_scaler.py          # 素材缩放（720p → 其他分辨率）
+├── image_scaler.py          # 素材缩放（2K → 其他分辨率）
 ├── language/                # 模板包目录
 │   ├── EN/                  # 英语
-│   │   ├── EN_1280x720/     # 720p 原生素材
+│   │   ├── EN_1280x720/     # 720p（缩放生成）
 │   │   ├── EN_1920x1080/    # 1080p（缩放生成）
-│   │   ├── EN_2560x1440/    # 1440p（缩放生成）
+│   │   ├── EN_2560x1440/    # 2K 原生素材
 │   │   └── EN_3840x2160/    # 4K（缩放生成）
 │   └── JP/                  # 日语
 │       └── ...
@@ -193,8 +191,8 @@ Magia_Exedra_auto/
 | 贡献者 | 贡献内容 |
 |:------:|:---------|
 | **TIAN000000** | v1.0.0+ 脚本整体思路及后续维护 |
-| **洛殿** | v1.0.0+ 部分日语素材及分辨率缩放方案 |
-| **智谱AI** | v2.0.0 完全由 GLM-5.2 重写并构建 |
+| **洛殿** | v1.0.0+ 部分日语素材及分辨率缩放方案<br>v2.0.0+ 提供算力支撑及日语素材 |
+| **智谱AI** | v2.0.0+ 完全由 GLM-5.2 重写并构建 |
 
 ---
 

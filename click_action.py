@@ -4,6 +4,8 @@ from pathlib import Path
 import pyautogui
 
 import click_behavior
+import language_switcher
+import image_scaler
 
 
 #尝试点击一次，查询组内所有图片，返回点击结果return
@@ -92,3 +94,27 @@ def move_a_to_b(move_lelt_a,move_top_a,move_lelt_b,move_top_b):
     pyautogui.dragTo(left + move_lelt_b, top + move_top_b,duration=2,button='left')
     time.sleep(0.1)
     return 0
+
+
+#按当前激活分辨率缩放 2K 基准坐标（窗口相对）。
+#读取 language_switcher.current_selection() 拿到当前 pack 的分辨率，
+#再用 image_scaler.scale_factor() 算出相对 2K 源的倍数（2K 源自身=1.0）。
+#这样 link_raid 开头那些硬编码坐标在 720p/1080p/2K/4K 下都能命中同一处 UI。
+def _res_scale_factor():
+    sel = language_switcher.current_selection()
+    if not sel or not sel[1]:
+        return 1.0
+    f = image_scaler.scale_factor(sel[1])
+    return f if f else 1.0
+
+
+def click_position_scaled(x_2k, y_2k):
+    #把 2K 基准坐标按当前分辨率缩放后点击
+    f = _res_scale_factor()
+    return click_position(round(x_2k * f), round(y_2k * f))
+
+
+def move_a_to_b_scaled(ax_2k, ay_2k, bx_2k, by_2k):
+    #把 2K 基准起止坐标按当前分辨率缩放后拖拽
+    f = _res_scale_factor()
+    return move_a_to_b(round(ax_2k * f), round(ay_2k * f), round(bx_2k * f), round(by_2k * f))

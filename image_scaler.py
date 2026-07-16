@@ -1,14 +1,16 @@
 #素材缩放模块
-#把 language/<语言>/<语言>_1280x720 里的 720p 模板按倍率放大到其它分辨率的 pack。
+#把 language/<语言>/<语言>_2560x1440 里的 2K 模板按倍率缩放到其它分辨率的 pack。
 #只依赖标准库，不依赖 PySide6，方便单独测试，和 language_switcher.py 保持一致。
 #
 #实际缩放用 tools/ImageMagick/magick.exe。便携版 magick 找不到 coder 模块时会报
 #CoderModulesPath / no decode delegate，必须先把 MAGICK_HOME、模块路径、PATH 指向
 #tools/ImageMagick 才能用，所以这里给子进程单独构造环境变量，不污染主进程。
 #
-#支持 1.5x（1920x1080）、2x（2560x1440）、3x（3840x2160）。
-#1.5x 是非整数倍，magick 会做重采样插值，模板会比整数倍略糊、匹配稳定性稍降，
-#但总比 1920x1080 这个 pack 一直空着没法用强。
+#以 2K（2560x1440）为唯一标准源，向下/向上派生其它分辨率：
+#  0.5x  → 1280x720  （下采样，质量好）
+#  0.75x → 1920x1080 （下采样，质量好）
+#  1.5x  → 3840x2160 （上采样，非整数倍，magick 重采样插值，模板略糊、匹配稳定性稍降）
+#下采样的 720p/1080p pack 质量优于上采样的 4K pack，但总比空着没法用强。
 #mogrify 的 -path 会把子目录拍平，破坏 <dirpath>_N.png 的分组结构，
 #所以这里逐张用 magick convert，保留源 pack 的子目录结构写到目标 pack。
 #
@@ -20,9 +22,9 @@ import sys
 import stat
 import subprocess
 
-SOURCE_RES = "1280x720"   #720p 是唯一的标准源，所有放大都从它派生
-SOURCE_W = 1280
-SOURCE_H = 720
+SOURCE_RES = "2560x1440"   #2K 是唯一的标准源，所有缩放都从它派生
+SOURCE_W = 2560
+SOURCE_H = 1440
 #和 image.bash 一致的扩展名
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 
@@ -105,9 +107,9 @@ def _walk_images(root):
 
 def scale_factor(res):
     """
-    给定分辨率字符串（如 '2560x1440'），返回相对 720p 的缩放倍数。
-    支持 1.5x（1920x1080）、2x（2560x1440）、3x（3840x2160）；
-    比例不是 16:9、或就是 720p 本身，都返回 None。
+    给定分辨率字符串（如 '1920x1080'），返回相对 2K 源的缩放倍数。
+    支持 0.5x（1280x720，下采样）、0.75x（1920x1080，下采样）、1.5x（3840x2160，上采样）；
+    比例不是 16:9、或就是 2K 源本身，都返回 None。
     """
     try:
         w_s, h_s = res.lower().split("x")
@@ -118,18 +120,22 @@ def scale_factor(res):
     #高度必须按同样倍数缩放（16:9 一致），用 round 容错浮点
     if round(h / SOURCE_H, 4) != round(factor, 4):
         return None
-    if factor <= 1:                 #1x 就是 720p 自己，不需要缩放
+    if abs(factor - 1.0) < 1e-9:    #1x 就是 2K 源自己，不需要缩放
         return None
     if factor == int(factor):       #整数倍（2、3、...）直接返回 int
         return int(factor)
-    if abs(factor - 1.5) < 1e-9:    #1.5 倍（1920x1080）
+    if abs(factor - 1.5) < 1e-9:    #1.5 倍（3840x2160，上采样）
         return 1.5
+    if abs(factor - 0.75) < 1e-9:   #0.75 倍（1920x1080，下采样）
+        return 0.75
+    if abs(factor - 0.5) < 1e-9:    #0.5 倍（1280x720，下采样）
+        return 0.5
     return None                     #其它非整数倍不支持，避免严重失真
 
 
 def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None):
     """
-    把某个语言的 720p pack 按倍率放大到该语言下所有可缩放的分辨率 pack。
+    把某个语言的 2K 源 pack 按倍率缩放到该语言下所有可缩放的分辨率 pack。
     目标里已存在的同名文件会跳过，只补齐缺失的。
     返回 (生成张数, 跳过张数, 详情列表)。
     """
@@ -148,7 +154,7 @@ def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None):
         res = name[len(prefix):]
         factor = scale_factor(res)
         if factor is None:
-            continue   #不支持该倍率（含 720p 自己）就跳过，不报错
+            continue   #不支持该倍率（含 2K 源自己）就跳过，不报错
         dst_dir = os.path.join(lang_dir, name)
         if progress_cb:
             progress_cb(f"开始缩放 {lang} {res} {factor}x ...")
@@ -171,7 +177,7 @@ def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None):
 
 def scale_all(progress_cb=None):
     """
-    扫描 language/ 下所有语言，把每个语言的 720p 模板按倍率放大到对应分辨率。
+    扫描 language/ 下所有语言，把每个语言的 2K 模板按倍率缩放到对应分辨率。
     返回一句话总结，供日志框显示。
     """
     if not os.path.isfile(MAGICK_EXE):

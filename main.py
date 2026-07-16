@@ -525,10 +525,10 @@ class WorkThread_1 (QThread):
     def into_link_raid(self):
         result = 1
 
-        click_action.click_position(1000, 500)
+        click_action.click_position_scaled(2000, 1000)
         self.signal.emit(str('把游戏弄到前台，然后随便碰一下中间'))
         time.sleep(0.2)
-        click_action.click_position(1200, 600)
+        click_action.click_position_scaled(2400, 1200)
         self.signal.emit(str('quests点击完成，这一下使用的是位置点击，不是识图，如果没有点到说明其他问题发生了'))
         time.sleep(0.2)
 
@@ -591,9 +591,9 @@ class WorkThread_1 (QThread):
 
         while(self.win_exist ==1):
             self.signal.emit(str(f'进入joined battle，开始清空已经结束的战斗。需要保证第一次能够清除后才会回到寻找战斗界面'))
-            click_action.move_a_to_b(700, 600, 700, 200)
-            click_action.move_a_to_b(700, 600, 700, 200)
-            click_action.move_a_to_b(700, 600, 700, 200)
+            click_action.move_a_to_b_scaled(1400, 1200, 1400, 400)
+            click_action.move_a_to_b_scaled(1400, 1200, 1400, 400)
+            click_action.move_a_to_b_scaled(1400, 1200, 1400, 400)
             self.signal.emit(
                 str(f'完成下移，开始找结束的对局'))
             time.sleep(2)#等一下防止出问题
@@ -734,7 +734,7 @@ class WorkThread_1 (QThread):
             else:
                 find_time=find_time-1
                 self.signal.emit(str(f'lv{self.level_choice}没有找到，往下拉动，还有的寻找次数为{find_time-2}'))
-                click_action.move_a_to_b(700, 600, 700, 200)
+                click_action.move_a_to_b_scaled(1400, 1200, 1400, 400)
                 time.sleep(4)
                 self.signal.emit(str(f'往下移动完成'))
 
@@ -940,7 +940,7 @@ class WorkThread_1 (QThread):
             else:
                 self.signal.emit(str('love没有找到，可能是次数耗尽或者要下拉'))
                 time.sleep(0.5)
-                click_action.move_a_to_b(700, 500, 700, 300)
+                click_action.move_a_to_b_scaled(1400, 1000, 1400, 600)
                 result = click_action.click_item_with_result(self, './aim/quests/link_raid/backup_requests/battle/love',
                                                              'love')
                 if result==1:
@@ -983,7 +983,7 @@ class WorkThread_2 (QThread):
         self.signal.emit(str(f'需要在选择完成关卡和队伍的界面启动。也就是点一下play就进入战斗的界面'))
 
         time.sleep(2)
-        click_action.click_position(1000, 500)
+        click_action.click_position_scaled(2000, 1000)
         self.signal.emit(str('把游戏弄到前台，然后随便碰一下中间'))
         time.sleep(1)
 
