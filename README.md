@@ -1,5 +1,7 @@
 <div align="center">
 
+[简体中文](./README.md) · [English](./README_EN.md) · [日本語](./README_JP.md)
+
 # Magia Exedra 自动挂机
 
 基于图像识别的 **Magia Exedra**（圆哆啦）Windows 游戏自动化脚本
@@ -191,7 +193,7 @@ Magia_Exedra_auto/
 | 贡献者 | 贡献内容 |
 |:------:|:---------|
 | **TIAN000000** | v1.0.0+ 脚本整体思路及后续维护 |
-| **LuoDian** | v1.0.0+ 部分日语素材及分辨率缩放方案 |
+| **洛殿** | v1.0.0+ 部分日语素材及分辨率缩放方案 |
 | **智谱AI** | v2.0.0 完全由 GLM-5.2 重写并构建 |
 
 ---
