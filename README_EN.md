@@ -40,6 +40,9 @@
 
 - Brings the game window to the foreground on startup
 - Stop button can interrupt any farming task at any time
+- The two farming modes are mutually exclusive; template switching and refresh are disabled while a task is running
+- Automatically stops safely if a normal screen is not recognized within 60 seconds or a battle within 30 minutes
+- Recognition captures only the game window; missing windows or invalid templates are reported instead of crashing
 - Language / resolution switching (supports English, Japanese; multi-resolution assets auto-scaled)
 - One-click scaling of 2K (2560×1440) source assets to 720p / 1080p / 4K
 
@@ -140,13 +143,15 @@ Automatically scales the 2K (2560×1440) source assets to other resolutions:
 | 2560×1440 | 3840×2160 | 1.5x (upscale) |
 
 > 720p / 1080p are downscaled and of good quality; 4K is upscaled (non-integer resampling) and slightly softer.
-> Existing target files are skipped; delete a target file to force regeneration.
+> A target is generated when missing or when its 2K source content changes. Derived templates removed from the source pack are cleaned automatically. The list refreshes after scaling.
 
 ---
 
 ## Notes
 
-- The **game window must be in the foreground**; the bot can run in the background (being covered by other windows does not matter)
+> **Testing status:** The latest changes to thread stopping, wait timeouts, game-window capture, and incremental template scaling have only passed syntax, import, and static diff checks. They have not yet undergone extended end-to-end testing against the live game. Monitor a short run before leaving the bot unattended.
+
+- The **game window must be in the foreground and unobstructed**; the bot window itself can remain in the background
 - The first click of Link Raid uses **hardcoded coordinates** (`2000,1000` → `2400,1200`, 2K baseline); they auto-scale to the active resolution, so 720p / 1080p / 2K / 4K all work
 - The game must run in **16:9** windowed mode, and the template's language and resolution must match the game
 - The JP server can be switched to EN in-game to reuse the English templates without re-capturing screenshots
@@ -183,7 +188,7 @@ Magia_Exedra_auto/
 
 - **Return value convention**: `2` = success / found / clicked; `1` = not found / keep trying. Not booleans.
 - **Template numbering**: `click_item_with_result` tries `<name>_1.png`, `<name>_2.png`... incrementing until a file does not exist; to add a variant, just drop in the next-numbered image.
-- **Stop flags**: `guaji_1` / `guaji_2` are global variables, unlocked, mutated by the `stop_any` thread and read by worker threads.
+- **Stop flags**: `guaji_1` / `guaji_2` retain the original state values and work with thread events to preserve start/stop ordering.
 
 ---
 

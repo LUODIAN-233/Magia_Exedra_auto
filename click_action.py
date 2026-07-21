@@ -26,7 +26,10 @@ def click_item_with_result(self, picture, name):
         print(f'文件状态是{file_exist}\n')
 
         if file_exist.exists():
-            check = click_behavior.routine(click_file, name)
+            can_click = getattr(self, '_running', None)
+            if can_click is not None and not can_click():
+                return 1
+            check = click_behavior.routine(click_file, name, can_click)
             print(f'点击{click_file}，点击返回值是{check}，成功点击是2，不点击是1')
             time.sleep(0.4)
         else:
@@ -78,22 +81,28 @@ def find_item_with_result(self, picture, name):
 #用于点击特定位置，输入坐标，第一个为窗口左到右的偏移，第二个上到下，注意上到下会有一个窗体厚度，不同缩放倍率会不同！
 def click_position(move_lelt,move_top):
     # 把游戏窗口弄出来
-    left, top = click_behavior.find_win('MadokaExedra')
+    window = click_behavior.find_win('MadokaExedra')
+    if window is None:
+        return 1
+    left, top, _width, _height = window
     time.sleep(0.1)
     pyautogui.moveTo(left + move_lelt, top + move_top)
     time.sleep(0.1)
     pyautogui.click(left + move_lelt, top + move_top,button='left')
     time.sleep(0.1)
-    return 0
+    return 2
 
 def move_a_to_b(move_lelt_a,move_top_a,move_lelt_b,move_top_b):
-    left, top = click_behavior.find_win('MadokaExedra')
+    window = click_behavior.find_win('MadokaExedra')
+    if window is None:
+        return 1
+    left, top, _width, _height = window
     time.sleep(0.1)
     pyautogui.moveTo(left + move_lelt_a, top + move_top_a)
     time.sleep(0.1)
     pyautogui.dragTo(left + move_lelt_b, top + move_top_b,duration=2,button='left')
     time.sleep(0.1)
-    return 0
+    return 2
 
 
 #按当前激活分辨率缩放 2K 基准坐标（窗口相对）。

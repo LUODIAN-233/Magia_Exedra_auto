@@ -1,6 +1,7 @@
 import time
 import math
 import cv2
+import numpy as np
 import pyautogui
 
 import pywinctl as pwc
@@ -11,18 +12,29 @@ def get_xy(img_model_path):
     :param img_model_path:输入需要找的图片
     :return:坐标,匹配度（1是完全，0是不匹配）
     """
-    #截图
+    window = find_win('MadokaExedra')
+    if window is None:
+        return None, 0.0
 
-    pyautogui.screenshot().save("./screenshot/123.png")
-
-    #载入截图
-    img = cv2.imread("./screenshot/123.png")
+    left, top, width, height = window
+    try:
+        screenshot = pyautogui.screenshot(region=(left, top, width, height))
+        img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+    except Exception as e:
+        print(f"游戏窗口截图失败: {e}")
+        return None, 0.0
 
     #要找的模板
     img_terminal = cv2.imread(img_model_path)
+    if img_terminal is None:
+        print(f"模板图片读取失败: {img_model_path}")
+        return None, 0.0
 
     #读取模板宽度和高度
     height,width,ch= img_terminal.shape
+    if height > img.shape[0] or width > img.shape[1]:
+        print(f"模板尺寸大于游戏窗口: {img_model_path}")
+        return None, 0.0
 
     #匹配，返回一个值
     result=cv2.matchTemplate(img,img_terminal, cv2.TM_SQDIFF_NORMED)
@@ -42,7 +54,10 @@ def get_xy(img_model_path):
     lower_right = (upper_left[0]+ width, upper_left[1]+height)
 
     #计算中心
-    avg= (int((upper_left[0]+lower_right[0])/2),int((upper_left[1]+lower_right[1])/2))
+    avg = (
+        left + int((upper_left[0] + lower_right[0]) / 2),
+        top + int((upper_left[1] + lower_right[1]) / 2),
+    )
     return avg,1-match_rate
 
 def click_auto (var_avg):
@@ -62,7 +77,7 @@ def click_auto (var_avg):
     time.sleep(0.1)
 
 
-def routine (img_model_path,name):
+def routine (img_model_path,name, can_click=None):
     """
     点击的事实上的使用函数
     :param img_model_path:图片
@@ -71,7 +86,10 @@ def routine (img_model_path,name):
     """
     avg,match_rate= get_xy(img_model_path)
 
-    if match_rate>0.8:
+    if avg is not None and match_rate>0.8:
+        if can_click is not None and not can_click():
+            print(f'任务已停止，不点击{name}')
+            return int(1)
         print(f'点击{name}')
         click_auto(avg)
         return int(2)
@@ -89,7 +107,7 @@ def routine_only_find (img_model_path,name):
     """
     avg,match_rate= get_xy(img_model_path)
 
-    if match_rate>0.8:
+    if avg is not None and match_rate>0.8:
         print(f'存在{name}元素，不会点击')
         # click_auto(avg)
         return int(2)
@@ -108,17 +126,24 @@ def find_win(title):
     wins = pwc.getWindowsWithTitle(title)
     if not wins:
         print(f"找不到窗口: {title}\n")
-        return int(2)
+        return None
 
     w = wins[0]
     if w.isMinimized:
         w.restore()
         print(f"正常找到\n")
-    w.activate()  # 置前/聚焦
+    try:
+        w.activate()  # 置前/聚焦
+    except Exception as e:
+        print(f"窗口聚焦失败: {e}")
+        return None
     print(f"窗口已弹出\n")
     time.sleep(0.2)
     print(f"返回的两个数据是，left：{w.left}，top：{w.top}")
-    return w.left,w.top#这个参数第一个越大越右边，第二个越大越往下
+    if w.width <= 0 or w.height <= 0:
+        print(f"游戏窗口尺寸无效: {w.width}x{w.height}")
+        return None
+    return w.left, w.top, w.width, w.height
 
 
 
