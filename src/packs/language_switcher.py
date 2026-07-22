@@ -11,8 +11,15 @@
 import os
 import sys
 import json
+import re
 import stat
 import subprocess
+import tempfile
+
+try:
+    from src.packs.file_lock import template_write_lock
+except ModuleNotFoundError:  #支持直接运行本文件排查
+    from file_lock import template_write_lock
 
 
 def base_dir():
@@ -46,6 +53,19 @@ def lang_label(code):
 def _pack_dir(lang, res):
     #某个 pack 的真实目录路径，形如 language/EN/EN_1280x720
     return os.path.join(LANGUAGE_DIR, lang, f"{lang}_{res}")
+
+
+def _valid_pack_id(lang, res):
+    if not isinstance(lang, str) or not isinstance(res, str):
+        return False
+    return bool(re.fullmatch(r"[A-Za-z0-9_-]+", lang) and re.fullmatch(r"[1-9]\d*x[1-9]\d*", res))
+
+
+def _inside(path, root):
+    try:
+        return os.path.commonpath((os.path.realpath(path), os.path.realpath(root))) == os.path.realpath(root)
+    except (OSError, ValueError):
+        return False
 
 
 def _is_link(path):
@@ -108,10 +128,15 @@ def _create_link(link, target):
 
 def pack_usable(lang, res):
     #一个 pack 是否可用：目录存在且至少有一张 png 模板
+    if not _valid_pack_id(lang, res):
+        return False
     d = _pack_dir(lang, res)
+    if not _inside(d, LANGUAGE_DIR) or _is_link(d):
+        return False
     if not os.path.isdir(d):
         return False
-    for _root, _dirs, files in os.walk(d):
+    for root, dirs, files in os.walk(d):
+        dirs[:] = [name for name in dirs if not _is_link(os.path.join(root, name))]
         if any(f.lower().endswith(".png") for f in files):
             return True
     return False
@@ -159,39 +184,49 @@ def _read_config():
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data.get("lang"), data.get("res")
+        lang, res = data.get("lang"), data.get("res")
+        return (lang, res) if _valid_pack_id(lang, res) else (None, None)
     except Exception:
         return None, None
 
 
 def _write_config(lang, res):
+    temp_path = None
     try:
         os.makedirs(LANGUAGE_DIR, exist_ok=True)
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        fd, temp_path = tempfile.mkstemp(prefix=".active.", suffix=".tmp", dir=LANGUAGE_DIR)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump({"lang": lang, "res": res}, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, CONFIG_PATH)
+        return True
     except Exception as e:
         print(f"写配置失败: {e}")
+        return False
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 
 def current_selection():
     """
     返回当前激活的 (lang, res)。
-    优先读 aim 联接的真实指向；读不到再读 config；都没有返回 None。
+    只认 aim 联接的实际目标；配置文件仅供 ensure_active() 恢复时使用。
     """
     target = _link_target(AIM_PATH)
-    if target and os.path.isdir(target):
-        try:
-            parts = os.path.normpath(target).split(os.sep)
-            if "language" in parts:
-                idx = parts.index("language")
-                lang = parts[idx + 1]
-                pack = parts[idx + 2]  #形如 EN_1280x720
-                prefix = lang + "_"
-                if pack.startswith(prefix):
-                    return lang, pack[len(prefix):]
-        except Exception:
-            pass
-    return _read_config()
+    if not target or not os.path.isdir(target) or not _inside(target, LANGUAGE_DIR):
+        return None
+    target = os.path.normcase(os.path.realpath(target))
+    for lang, packs in list_packs().items():
+        for res, usable in packs:
+            expected = os.path.normcase(os.path.realpath(_pack_dir(lang, res)))
+            if target == expected and usable:
+                return lang, res
+    return None
 
 
 def switch(lang, res):
@@ -199,7 +234,19 @@ def switch(lang, res):
     把 aim 联接重指向 language/lang/lang_res。
     返回 (ok: bool, message: str)。
     """
+    if not _valid_pack_id(lang, res):
+        return False, "语言或分辨率格式无效"
     target = _pack_dir(lang, res)
+    if not _inside(target, LANGUAGE_DIR):
+        return False, "目标 pack 不在 language/ 内"
+    try:
+        with template_write_lock(BASE_DIR, timeout=2):
+            return _switch_locked(lang, res, target)
+    except TimeoutError as e:
+        return False, str(e)
+
+
+def _switch_locked(lang, res, target):
     if not os.path.isdir(target):
         return False, f"目标 pack 不存在: {lang}/{lang}_{res}"
     if not pack_usable(lang, res):
@@ -208,10 +255,12 @@ def switch(lang, res):
     #已经是目标了就不用再切
     cur = _link_target(AIM_PATH)
     if cur and os.path.normpath(cur) == os.path.normpath(target):
-        _write_config(lang, res)
+        if not _write_config(lang, res):
+            return True, f"当前已经是 {lang} {res}，但保存选择失败"
         return True, f"当前已经是 {lang} {res}，无需切换"
 
     #处理现有的 aim：只允许删联接，真目录拒绝（避免误删模板）
+    old_target = cur if cur and os.path.isdir(cur) else None
     if os.path.lexists(AIM_PATH):
         if not _is_link(AIM_PATH):
             return False, "aim/ 当前是真实文件夹而不是联接，请先手动把它移走或删掉再切换"
@@ -220,8 +269,20 @@ def switch(lang, res):
 
     ok, err = _create_link(AIM_PATH, target)
     if not ok:
-        return False, f"创建 aim 联接失败: {err}"
-    _write_config(lang, res)
+        restore_msg = ""
+        if old_target:
+            restored, restore_err = _create_link(AIM_PATH, old_target)
+            if not restored:
+                restore_msg = f"；恢复旧联接也失败: {restore_err}"
+        return False, f"创建 aim 联接失败: {err}{restore_msg}"
+    actual = _link_target(AIM_PATH)
+    if not actual or os.path.normcase(os.path.realpath(actual)) != os.path.normcase(os.path.realpath(target)):
+        _remove_link(AIM_PATH)
+        if old_target:
+            _create_link(AIM_PATH, old_target)
+        return False, "创建后的 aim 联接目标校验失败"
+    if not _write_config(lang, res):
+        return True, f"已切换到 {lang} {res}，但保存选择失败"
     return True, f"切换完成: {lang} {res}"
 
 
@@ -247,13 +308,17 @@ def ensure_active():
         return None, None, msg
 
     #config 不可用，扫一遍找第一个可用 pack
-    for lg in sorted(list_packs().keys()):
-        for res, usable in list_packs()[lg]:
+    packs = list_packs()
+    errors = []
+    for lg in sorted(packs):
+        for res, usable in packs[lg]:
             if usable:
                 ok, msg = switch(lg, res)
                 if ok:
                     return lg, res, msg
-                return None, None, msg
+                errors.append(msg)
+    if errors:
+        return None, None, "；".join(errors)
     return None, None, "未找到任何可用的模板 pack（language/ 下的 pack 都没有图片）"
 
 

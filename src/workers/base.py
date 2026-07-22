@@ -10,6 +10,7 @@
 
 import time
 import threading
+import traceback
 
 from PySide6.QtCore import QThread, Signal
 
@@ -22,7 +23,7 @@ RETRY_TIMEOUT = 60
 BATTLE_TIMEOUT = 1800
 
 
-def retry_until(action, is_running, timeout=RETRY_TIMEOUT):
+def retry_until(action, is_running, timeout=RETRY_TIMEOUT, wait=None):
     #在 timeout 内反复执行 action，返回 2 即成功；超时返回 1。
     #和原 main.py 里的同名函数完全一致，保留给子类使用。
     deadline = time.monotonic() + timeout
@@ -30,7 +31,11 @@ def retry_until(action, is_running, timeout=RETRY_TIMEOUT):
         result = action()
         if result == 2:
             return 2
-        time.sleep(0.5)
+        if wait is not None:
+            if wait(min(0.5, max(0, deadline - time.monotonic()))):
+                break
+        else:
+            time.sleep(0.5)
     return 1
 
 
@@ -47,11 +52,15 @@ class BaseWorker(QThread):
         #是否仍在运行：自身未主动停止且未被 GUI 要求停止
         return self._active and not self._stop_event.is_set()
 
+    def _finish(self):
+        #内部结束与 GUI 停止使用同一个事件，让所有等待都能立即退出。
+        self._active = False
+        self._stop_event.set()
+
     def stop(self):
         #GUI 调用：请求停止。置位事件并清掉 active 标志，让 _running() 立刻变 False。
         #对未启动或已结束的线程调用也是安全的。
-        self._active = False
-        self._stop_event.set()
+        self._finish()
 
     def start(self, priority=QThread.InheritPriority):
         #每次启动前重置状态，保证同一个线程对象可反复启动
@@ -64,6 +73,14 @@ class BaseWorker(QThread):
         #替代原来的 stop_event.wait(seconds)，返回 True 表示等待期间被停止打断。
         return self._stop_event.wait(seconds)
 
+    def _run_safely(self, action):
+        #QThread 的未捕获异常通常只会出现在控制台；同步报告到 GUI 便于排查。
+        try:
+            action()
+        except Exception:
+            self.signal.emit('挂机线程异常退出：\n' + traceback.format_exc())
+            self._finish()
+
     def _click_until(self, picture, name, timeout=RETRY_TIMEOUT):
         #在 timeout 内反复尝试点击某组模板；超时则安全停止本线程并返回 1。
         #返回 2 表示点击成功，1 表示未点到（含超时停止）。
@@ -71,8 +88,9 @@ class BaseWorker(QThread):
             lambda: click_action.click_item_with_result(self, picture, name),
             self._running,
             timeout,
+            self._wait,
         )
         if result == 1 and self._running():
             self.signal.emit(f'等待{name}超过{timeout}秒，已安全停止。请检查起始界面、模板语言和分辨率。')
-            self._active = False
+            self._finish()
         return result

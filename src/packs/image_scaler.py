@@ -23,6 +23,13 @@ import stat
 import subprocess
 import hashlib
 import json
+import tempfile
+import time
+
+try:
+    from src.packs.file_lock import template_write_lock
+except ModuleNotFoundError:  #支持直接运行本文件排查
+    from file_lock import template_write_lock
 
 SOURCE_RES = "2560x1440"   #2K 是唯一的标准源，所有缩放都从它派生
 SOURCE_W = 2560
@@ -30,6 +37,7 @@ SOURCE_H = 1440
 #和 image.bash 一致的扩展名
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 MANIFEST_NAME = ".source_hashes.json"
+RECIPE_VERSION = 1
 
 
 def base_dir():
@@ -65,21 +73,33 @@ def _magick_cmd():
     return ["magick"], os.environ.copy()
 
 
-def _run_magick(src, dst, factor):
+def _run_magick(src, dst, factor, is_cancelled=None):
     #magick <src> -resize N00% <dst>，按倍率放大且宽高比不变；:g 去掉 1.5x 的 ".0"
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     prefix, env = _magick_cmd()
-    stem, ext = os.path.splitext(dst)
-    temp_dst = stem + ".tmp" + ext
+    fd, temp_dst = tempfile.mkstemp(
+        prefix="." + os.path.splitext(os.path.basename(dst))[0] + ".",
+        suffix=os.path.splitext(dst)[1],
+        dir=os.path.dirname(dst),
+    )
+    os.close(fd)
+    os.remove(temp_dst)
     cmd = prefix + [src, "-resize", f"{factor * 100:g}%", temp_dst]
     try:
-        subprocess.run(
-            cmd,
-            check=True,
-            capture_output=True,
-            env=env,
+        process = subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
+        deadline = time.monotonic() + 120
+        while process.poll() is None:
+            if (is_cancelled and is_cancelled()) or time.monotonic() >= deadline:
+                process.kill()
+                process.wait()
+                reason = "素材缩放已取消" if is_cancelled and is_cancelled() else "ImageMagick 运行超时"
+                raise RuntimeError(reason)
+            time.sleep(0.1)
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, cmd)
         os.replace(temp_dst, dst)
     finally:
         if os.path.exists(temp_dst):
@@ -100,6 +120,43 @@ def _is_reparse(path):
     except (OSError, AttributeError):
         pass
     return False
+
+
+def _inside(path, root):
+    try:
+        return os.path.commonpath((os.path.abspath(path), os.path.abspath(root))) == os.path.abspath(root)
+    except (OSError, ValueError):
+        return False
+
+
+def _safe_rel_path(rel):
+    if not isinstance(rel, str) or not rel or "\\" in rel:
+        return None
+    normalized = os.path.normpath(rel.replace("/", os.sep))
+    if os.path.isabs(normalized) or normalized == os.pardir or normalized.startswith(os.pardir + os.sep):
+        return None
+    if not normalized.lower().endswith(IMAGE_EXTS):
+        return None
+    reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+    for part in normalized.split(os.sep):
+        if ":" in part or part.endswith((" ", ".")) or part.split(".", 1)[0].upper() in reserved:
+            return None
+    return normalized
+
+
+def _safe_target_path(dst_dir, rel):
+    normalized = _safe_rel_path(rel)
+    if normalized is None:
+        return None
+    target = os.path.abspath(os.path.join(dst_dir, normalized))
+    if not _inside(target, dst_dir) or _is_reparse(dst_dir) or _is_reparse(target):
+        return None
+    current = os.path.abspath(dst_dir)
+    for part in normalized.split(os.sep)[:-1]:
+        current = os.path.join(current, part)
+        if os.path.lexists(current) and _is_reparse(current):
+            return None
+    return target
 
 
 def _walk_images(root, errors=None):
@@ -131,17 +188,33 @@ def _load_manifest(dst_dir):
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        result = {}
+        for key, value in data.items():
+            if _safe_rel_path(key) is None:
+                continue
+            if isinstance(value, str):
+                result[key] = {"source": value}
+            elif isinstance(value, dict) and isinstance(value.get("source"), str):
+                result[key] = value
+        return result
     except (OSError, ValueError):
         return {}
 
 
 def _save_manifest(dst_dir, data):
     path = os.path.join(dst_dir, MANIFEST_NAME)
-    temp_path = path + ".tmp"
-    with open(temp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=True, indent=2, sort_keys=True)
-    os.replace(temp_path, path)
+    fd, temp_path = tempfile.mkstemp(prefix=".source_hashes.", suffix=".tmp", dir=dst_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=True, indent=2, sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 #-----------对外功能-----------
@@ -174,21 +247,24 @@ def scale_factor(res):
     return None                     #其它非整数倍不支持，避免严重失真
 
 
-def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None):
+def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None, is_cancelled=None):
     """
     把某个语言的 2K 源 pack 按倍率缩放到该语言下所有可缩放的分辨率 pack。
     目标不存在或比源文件旧时生成，其余文件跳过。
     返回 (生成张数, 跳过张数, 详情列表)。
     """
     src_dir = os.path.join(LANGUAGE_DIR, lang, f"{lang}_{src_res}")
-    if not os.path.isdir(src_dir):
-        return 0, 0, [f"{lang} 没有 {src_res} 源 pack，跳过"]
+    lang_dir = os.path.join(LANGUAGE_DIR, lang)
+    if not os.path.isdir(src_dir) or _is_reparse(lang_dir) or _is_reparse(src_dir):
+        return 0, 0, [f"{lang} 没有安全可用的 {src_res} 源 pack，跳过"]
 
     generated = 0
     skipped = 0
     notes = []
-    lang_dir = os.path.join(LANGUAGE_DIR, lang)
     for name in sorted(os.listdir(lang_dir)):
+        if is_cancelled and is_cancelled():
+            notes.append(f"{lang} 素材缩放已取消")
+            break
         prefix = lang + "_"
         if not name.startswith(prefix):
             continue
@@ -197,6 +273,9 @@ def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None):
         if factor is None:
             continue   #不支持该倍率（含 2K 源自己）就跳过，不报错
         dst_dir = os.path.join(lang_dir, name)
+        if not os.path.isdir(dst_dir) or _is_reparse(dst_dir):
+            notes.append(f"跳过不安全的目标 pack: {lang} {res}")
+            continue
         manifest = _load_manifest(dst_dir)
         next_manifest = {}
         source_paths = set()
@@ -204,17 +283,33 @@ def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None):
         if progress_cb:
             progress_cb(f"开始缩放 {lang} {res} {factor}x ...")
         for src_full, rel in _walk_images(src_dir, scan_errors):
-            dst_full = os.path.join(dst_dir, rel)
+            if is_cancelled and is_cancelled():
+                scan_errors.append(RuntimeError("素材缩放已取消"))
+                break
+            rel_key = rel.replace(os.sep, "/")
+            dst_full = _safe_target_path(dst_dir, rel_key)
+            if dst_full is None or _is_reparse(src_full):
+                notes.append(f"跳过不安全路径 {lang} {res} {rel}")
+                scan_errors.append(RuntimeError(f"不安全路径: {rel}"))
+                continue
             try:
-                rel_key = rel.replace(os.sep, "/")
                 source_paths.add(rel_key)
                 source_hash = _file_hash(src_full)
-                if os.path.exists(dst_full) and manifest.get(rel_key) == source_hash:
+                old_record = manifest.get(rel_key, {})
+                recipe = f"resize-v{RECIPE_VERSION}:{factor:g}"
+                if os.path.isfile(dst_full) \
+                        and old_record.get("source") == source_hash \
+                        and old_record.get("recipe") == recipe \
+                        and old_record.get("target") == _file_hash(dst_full):
                     skipped += 1
-                    next_manifest[rel_key] = source_hash
+                    next_manifest[rel_key] = old_record
                     continue
-                _run_magick(src_full, dst_full, factor)
-                next_manifest[rel_key] = source_hash
+                _run_magick(src_full, dst_full, factor, is_cancelled)
+                next_manifest[rel_key] = {
+                    "source": source_hash,
+                    "target": _file_hash(dst_full),
+                    "recipe": recipe,
+                }
                 generated += 1
             except subprocess.CalledProcessError as e:
                 err = e.stderr.decode("mbcs", "ignore") if e.stderr else str(e)
@@ -224,25 +319,36 @@ def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None):
         removed = 0
         if scan_errors:
             notes.append(f"{lang} {res} 源目录扫描不完整，跳过失效模板清理")
-        for rel_key in set(manifest) - source_paths if not scan_errors else ():
-            dst_full = os.path.join(dst_dir, *rel_key.split("/"))
+        stale_paths = set(manifest) - source_paths
+        for rel_key in stale_paths if not scan_errors else ():
+            dst_full = _safe_target_path(dst_dir, rel_key)
+            if dst_full is None:
+                if rel_key in manifest:
+                    next_manifest[rel_key] = manifest[rel_key]
+                notes.append(f"拒绝清理不安全路径 {lang} {res} {rel_key}")
+                continue
             if os.path.isfile(dst_full):
                 try:
                     os.remove(dst_full)
                     removed += 1
                 except OSError as e:
+                    if rel_key in manifest:
+                        next_manifest[rel_key] = manifest[rel_key]
                     notes.append(f"清理失败 {lang} {res} {rel_key}: {e}")
+        if scan_errors:
+            for rel_key, record in manifest.items():
+                next_manifest.setdefault(rel_key, record)
         try:
             _save_manifest(dst_dir, next_manifest)
         except OSError as e:
             notes.append(f"保存缩放记录失败 {lang} {res}: {e}")
         if removed:
             notes.append(f"{lang} {res} 清理失效模板 {removed} 张")
-        notes.append(f"{lang} {res} {factor}x 完成")
+        notes.append(f"{lang} {res} {factor}x 处理结束")
     return generated, skipped, notes
 
 
-def scale_all(progress_cb=None):
+def scale_all(progress_cb=None, is_cancelled=None):
     """
     扫描 language/ 下所有语言，把每个语言的 2K 模板按倍率缩放到对应分辨率。
     返回一句话总结，供日志框显示。
@@ -258,16 +364,25 @@ def scale_all(progress_cb=None):
     total_gen = 0
     total_skip = 0
     all_notes = []
-    for lang in sorted(os.listdir(LANGUAGE_DIR)):
-        lang_dir = os.path.join(LANGUAGE_DIR, lang)
-        if not os.path.isdir(lang_dir):
-            continue
-        g, s, notes = scale_pack(lang, progress_cb=progress_cb)
-        total_gen += g
-        total_skip += s
-        all_notes.extend(notes)
+    try:
+        with template_write_lock(BASE_DIR, timeout=30, is_cancelled=is_cancelled):
+            for lang in sorted(os.listdir(LANGUAGE_DIR)):
+                if is_cancelled and is_cancelled():
+                    all_notes.append("素材缩放已取消")
+                    break
+                lang_dir = os.path.join(LANGUAGE_DIR, lang)
+                if not os.path.isdir(lang_dir) or _is_reparse(lang_dir):
+                    continue
+                g, s, notes = scale_pack(
+                    lang, progress_cb=progress_cb, is_cancelled=is_cancelled,
+                )
+                total_gen += g
+                total_skip += s
+                all_notes.extend(notes)
+    except TimeoutError as e:
+        all_notes.append(str(e))
 
-    summary = f"素材缩放完成: 新生成 {total_gen} 张，已存在跳过 {total_skip} 张"
+    summary = f"素材缩放处理结束: 新生成 {total_gen} 张，已存在跳过 {total_skip} 张"
     for n in all_notes:
         summary += "\n  " + n
     return summary

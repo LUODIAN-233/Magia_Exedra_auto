@@ -55,6 +55,9 @@ class LanguageSwitcherWidget(QWidget):
         self.setLayout(layout)
 
         self.packs = {}
+        self._scaling = False
+        self._scale_cancel = threading.Event()
+        self._scale_thread = None
         self._refresh()
 
     def _lang_label(self, code):
@@ -89,26 +92,32 @@ class LanguageSwitcherWidget(QWidget):
 
     def _scale_async(self):
         #后台跑素材缩放，不阻塞界面；已有目标会跳过，重复点也不会并发
-        if getattr(self, '_scaling', False):
+        if self._scaling:
             return
         self._scaling = True
+        self._scale_cancel.clear()
         self.refreshBtn.setEnabled(False)
         self.langCombo.setEnabled(False)
         self.resCombo.setEnabled(False)
         self.scalingChanged.emit(True)
         def _work():
             try:
-                summary = image_scaler.scale_all(progress_cb=lambda s: self.switched.emit(s))
+                summary = image_scaler.scale_all(
+                    progress_cb=lambda s: self.switched.emit(s),
+                    is_cancelled=self._scale_cancel.is_set,
+                )
                 if summary:
                     self.switched.emit(summary)
             except Exception as e:
                 self.switched.emit(f'素材缩放出错: {e}')
             finally:
-                self._scaling = False
                 self.scaleFinished.emit()
-        threading.Thread(target=_work, daemon=True).start()
+        self._scale_thread = threading.Thread(target=_work, daemon=True)
+        self._scale_thread.start()
 
     def _scale_finished(self):
+        self._scaling = False
+        self._scale_thread = None
         self.refreshBtn.setEnabled(True)
         self.langCombo.setEnabled(True)
         self.resCombo.setEnabled(True)
@@ -203,6 +212,7 @@ class mywindow(QWidget):
         self.textedit_1_title = QLabel('输出运行结果的框框')
         # 用于输出运行日志的框体
         self.textedit_1 = QPlainTextEdit()
+        self.textedit_1.document().setMaximumBlockCount(2000)
 
         #遍历注册表，为每个挂机模式创建 worker + 参数控件 + 启动按钮
         #每个 entry 记录：meta、worker、start_button、param_layout、所有可禁用控件、参数 getter
@@ -216,7 +226,7 @@ class mywindow(QWidget):
 
         #语言/分辨率切换控件，切换 aim 联接指向
         self.lang_switcher = LanguageSwitcherWidget(self._automation_running)
-        self.lang_switcher.switched.connect(lambda x: self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {x}"))
+        self.lang_switcher.switched.connect(self._append_log)
         self.lang_switcher.switched.connect(lambda: self.setWindowIcon(QIcon('./resource/main.ico')))
         self.lang_switcher.scalingChanged.connect(self._scaling_changed)
 
@@ -242,12 +252,10 @@ class mywindow(QWidget):
     def _build_worker_entry(self, meta):
         #为一个挂机模式创建 worker、参数控件和启动按钮，返回 entry 字典
         worker = meta.worker_class()
-        log_prefix = f"[{datetime.now().strftime('%H:%M:%S')}]: "
-        worker.signal.connect(lambda x: self.textedit_1.appendPlainText(log_prefix + x))
+        worker.signal.connect(self._append_log)
         display_name = meta.name.replace('_', ' ')
         worker.finished.connect(lambda n=display_name: print(f'{n}挂机结束'))
-        worker.finished.connect(lambda n=display_name: self.textedit_1.appendPlainText(
-            f"[{datetime.now().strftime('%H:%M:%S')}]: {n}挂机结束或被主动停止\n"))
+        worker.finished.connect(lambda n=display_name: self._append_log(f'{n}挂机结束或被主动停止\n'))
         worker.finished.connect(self._automation_finished)
 
         #参数控件区
@@ -272,6 +280,9 @@ class mywindow(QWidget):
         }
         start_button.clicked.connect(lambda _checked=False, e=entry: self._start_worker(e))
         return entry
+
+    def _append_log(self, text):
+        self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {text}")
 
     def _build_param_widget(self, spec):
         #根据 ParamSpec.kind 生成对应控件，返回 (QLayout, getter函数, 可禁用控件列表)
@@ -382,6 +393,27 @@ class mywindow(QWidget):
         #任何一个 worker 在跑，或正在缩放素材，都算"忙"
         return any(e['worker'].isRunning() for e in self._entries) \
             or getattr(self.lang_switcher, '_scaling', False)
+
+    def closeEvent(self, event):
+        #先协作停止后台任务，避免窗口销毁后线程继续点击或向 Qt 对象发信号。
+        for entry in self._entries:
+            entry['worker'].stop()
+        self.lang_switcher._scale_cancel.set()
+
+        workers_stopped = True
+        for entry in self._entries:
+            worker = entry['worker']
+            if worker.isRunning() and not worker.wait(5000):
+                workers_stopped = False
+        scale_thread = self.lang_switcher._scale_thread
+        if scale_thread and scale_thread.is_alive():
+            scale_thread.join(timeout=5)
+
+        if not workers_stopped or (scale_thread and scale_thread.is_alive()):
+            self._append_log('后台任务尚未安全停止，请稍后再关闭窗口。')
+            event.ignore()
+            return
+        event.accept()
 
     def _stop_automation(self):
         #请求所有工作线程停止；互斥运行时只有一个在跑，对没在跑的调用 stop() 也是安全的

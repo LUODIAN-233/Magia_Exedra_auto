@@ -38,6 +38,9 @@ class CrystalisWorker(BaseWorker):
         self.lp_recover_times = lp_recover_times
 
     def run(self):
+        self._run_safely(self._run)
+
+    def _run(self):
         print('执行CrystalisWorker,两秒钟后启动！\n')
         self.signal.emit(str('启动刷晶花挂机'))
 
@@ -52,7 +55,7 @@ class CrystalisWorker(BaseWorker):
 
         if self._wait(2):
             return
-        click_action.click_position_scaled(2000, 1000)
+        click_action.click_position_scaled(2000, 1000, self._running)
         self.signal.emit(str('把游戏弄到前台，然后随便碰一下中间'))
         if self._wait(1):
             return
@@ -91,7 +94,7 @@ class CrystalisWorker(BaseWorker):
                 self.signal.emit(str(f'result被点击过一次，尝试寻找retry，具体的状态是{check_win}，1是没有找到，2是找到了'))
         if check_win == 1 and self._running():
             self.signal.emit('等待晶花战斗结束超时，已安全停止。')
-            self._active = False
+            self._finish()
 
     def click_retry_or_recover_lp(self):
         result = 1
@@ -99,18 +102,19 @@ class CrystalisWorker(BaseWorker):
         if result == 2:
             self.signal.emit(str('retry点击完成'))
 
-        time.sleep(2)  # 等待确保延迟
+        if self._wait(2):  # 等待确保延迟
+            return
         # 寻找是否存在体力耗尽
         if click_action.find_item_with_result(self, './aim/crystalis/ok', 'ok') == 2:
             self.lp_recover = self.lp_recover - 1
             self.signal.emit(str(f'体力用完了，剩余体力恢复次数还是{self.lp_recover}'))
             if self.lp_recover == 0:
-                self._active = False
+                self._finish()
 
             result = 1
             result = self._click_until('./aim/crystalis/ok', 'ok')
             if result == 2:
                 self.signal.emit(str('ok点击完成，体力完成恢复'))
-                time.sleep(5)  # 防止瞬间出现的 retry 干扰
+                self._wait(5)  # 防止瞬间出现的 retry 干扰
         else:
             self.signal.emit(str(f'当前还有体力，下一把战斗正常开始，体力剩余恢复次数是{self.lp_recover - 1}'))

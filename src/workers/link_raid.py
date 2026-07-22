@@ -47,6 +47,9 @@ class LinkRaidWorker(BaseWorker):
         self.lp_recover_times = lp_recover_times
 
     def run(self):
+        self._run_safely(self._run)
+
+    def _run(self):
         print('执行LinkRaidWorker,两秒钟后启动！\n')
         self.signal.emit(str('启动link raid挂机'))
 
@@ -111,13 +114,14 @@ class LinkRaidWorker(BaseWorker):
 
         if not self._running():
             return
-        click_action.click_position_scaled(2000, 1000)
+        click_action.click_position_scaled(2000, 1000, self._running)
         self.signal.emit(str('把游戏弄到前台，然后随便碰一下中间'))
         if self._wait(0.2):
             return
-        click_action.click_position_scaled(2400, 1200)
+        click_action.click_position_scaled(2400, 1200, self._running)
         self.signal.emit(str('quests点击完成，这一下使用的是位置点击，不是识图，如果没有点到说明其他问题发生了'))
-        time.sleep(0.2)
+        if self._wait(0.2):
+            return
 
         # 在 quest 界面点击 link raid
         result = self._click_until('./aim/quests/link_raid', 'link_raid')
@@ -166,7 +170,7 @@ class LinkRaidWorker(BaseWorker):
             for _ in range(3):
                 if not self._running():
                     return
-                click_action.move_a_to_b_scaled(1400, 1200, 1400, 400)
+                click_action.move_a_to_b_scaled(1400, 1200, 1400, 400, self._running)
             self.signal.emit(
                 str(f'完成下移，开始找结束的对局'))
             if self._wait(2):
@@ -188,7 +192,7 @@ class LinkRaidWorker(BaseWorker):
 
         if self._running() and self.win_exist == 1:
             self.signal.emit('等待已结束战斗超时，已安全停止。')
-            self._active = False
+            self._finish()
             return
 
         result = 1
@@ -276,7 +280,7 @@ class LinkRaidWorker(BaseWorker):
                 self.signal.emit(str(f'lv{self.level_choice}没有找到，往下拉动，还有的寻找次数为{find_time - 2}'))
                 if not self._running():
                     return
-                click_action.move_a_to_b_scaled(1400, 1200, 1400, 400)
+                click_action.move_a_to_b_scaled(1400, 1200, 1400, 400, self._running)
                 if self._wait(4):
                     return
                 self.signal.emit(str(f'往下移动完成'))
@@ -313,7 +317,8 @@ class LinkRaidWorker(BaseWorker):
         result = 1
 
         # 判断体力是否耗尽，正常情况应该是 1，耗尽会变成 2
-        time.sleep(0.2)
+        if self._wait(0.2):
+            return
         self.LP_full = click_action.find_item_with_result(self, f'./aim/quests/link_raid/backup_requests/no_lp/no_lp', 'no_lp')
         self.signal.emit(str(f'体力是否耗尽的状态是{self.LP_full}，1是体力还能继续打，2是不能打了，要开始判断是否喝药或者暂停'))
 
@@ -322,7 +327,7 @@ class LinkRaidWorker(BaseWorker):
             self.LP_full_add = self.LP_full_add - 1
             self.signal.emit(str(f'剩余喝体力药的次数是{self.LP_full_add}，0就是不喝药了，结束挂机'))
             if self.LP_full_add == 0:  # 剩余喝药次数耗尽
-                self._active = False
+                self._finish()
             else:
                 result = self._click_until('./aim/quests/link_raid/backup_requests/no_lp/ok', 'ok')
                 if result == 2:
@@ -338,7 +343,8 @@ class LinkRaidWorker(BaseWorker):
     # 判断当前战斗是否结束，结束了点一下刷新
     def check_already_end(self):
         # 防止延迟问题
-        time.sleep(0.9)
+        if self._wait(0.9):
+            return
 
         # 确认战斗是否结束
         self.already_end = click_action.find_item_with_result(self, f'./aim/quests/link_raid/backup_requests/join/full/already_end', 'already_end')
@@ -382,7 +388,8 @@ class LinkRaidWorker(BaseWorker):
         result = 1
 
         # 等待 2 秒，防止延迟，该死的服务器
-        time.sleep(2)
+        if self._wait(2):
+            return
 
         # 等待 back 界面出现，然后开始点赞，这里通过找到最底下的 back 来判定是否可以点赞
         wait_back = retry_until(
@@ -390,12 +397,13 @@ class LinkRaidWorker(BaseWorker):
                 self, './aim/quests/link_raid/backup_requests/battle/back', 'back'
             ),
             self._running,
+            wait=self._wait,
         )
         if wait_back == 2:
             self.signal.emit(str('back已经可以看到，可以开始点赞'))
         elif self._running():
             self.signal.emit('等待back超时，已安全停止。')
-            self._active = False
+            self._finish()
 
         # 点赞系统。最多点 9 下，点到不能点为止
         love_time = 9
@@ -410,7 +418,7 @@ class LinkRaidWorker(BaseWorker):
                     return
                 if not self._running():
                     return
-                click_action.move_a_to_b_scaled(1400, 1000, 1400, 600)
+                click_action.move_a_to_b_scaled(1400, 1000, 1400, 600, self._running)
                 result = click_action.click_item_with_result(self, './aim/quests/link_raid/backup_requests/battle/love',
                                                              'love')
                 if result == 1:
