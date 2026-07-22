@@ -3,9 +3,8 @@ from pathlib import Path
 
 import pyautogui
 
-import click_behavior
-import language_switcher
-import image_scaler
+from . import click_behavior
+from src.packs import language_switcher, image_scaler
 
 
 #尝试点击一次，查询组内所有图片，返回点击结果return

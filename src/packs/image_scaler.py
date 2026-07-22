@@ -33,10 +33,11 @@ MANIFEST_NAME = ".source_hashes.json"
 
 
 def base_dir():
-    #与 main.py / language_switcher.py 的 get_executable_directory 逻辑一致
+    #脚本位于 src/packs/ 子目录，需再上两层到仓库根；打包后用可执行文件所在目录
+    #与 language_switcher.py 的 base_dir 逻辑一致（与 main.py 仅非打包分支多上两层）
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 BASE_DIR = base_dir()

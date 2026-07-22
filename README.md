@@ -161,15 +161,19 @@ pyinstaller -D -i resource/main.ico main.py
 
 ```
 Magia_Exedra_auto/
-├── main.py                  # GUI 入口：仅构造/启动/停止工作线程并传参
-├── workers/                 # 挂机运行逻辑包（与 GUI 解耦）
-│   ├── base.py              # 工作线程基类（运行/停止状态、重试与超时停止）
-│   ├── link_raid.py         # Link Raid 挂机流程
-│   └── crystalis.py         # 晶花挂机流程
-├── click_action.py          # 高级点击动作（模板迭代、坐标点击、拖拽）
-├── click_behavior.py        # 低级操作（截图、匹配、点击、窗口聚焦）
-├── language_switcher.py     # 语言/分辨率切换（junction 管理）
-├── image_scaler.py          # 素材缩放（2K → 其他分辨率）
+├── main.py                  # GUI 入口：遍历注册表构造/启动/停止工作线程并传参
+├── src/                     # 源码包
+│   ├── workers/             # 挂机运行逻辑包（与 GUI 解耦）
+│   │   ├── registry.py      # 注册表：worker 用 @register 自描述参数，GUI 自动生成控件
+│   │   ├── base.py          # 工作线程基类（运行/停止状态、重试与超时停止）
+│   │   ├── link_raid.py     # Link Raid 挂机流程
+│   │   └── crystalis.py     # 晶花挂机流程
+│   ├── click/               # 点击模块包
+│   │   ├── click_action.py  # 高级点击动作（模板迭代、坐标点击、拖拽）
+│   │   └── click_behavior.py# 低级操作（截图、匹配、点击、窗口聚焦）
+│   └── packs/               # 模板包管理（纯标准库，可单独运行）
+│       ├── language_switcher.py # 语言/分辨率切换（junction 管理）
+│       └── image_scaler.py  # 素材缩放（2K -> 其他分辨率）
 ├── language/                # 模板包目录
 │   ├── EN/                  # 英语
 │   │   ├── EN_1280x720/     # 720p（缩放生成）
@@ -179,7 +183,6 @@ Magia_Exedra_auto/
 │   └── JP/                  # 日语
 │       └── ...
 ├── aim/                     # 运行时 junction，指向当前使用的模板包
-├── screenshot/              # 运行时截图存放目录
 ├── resource/
 │   └── main.ico             # 程序图标
 ├── tools/

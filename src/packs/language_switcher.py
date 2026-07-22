@@ -16,16 +16,29 @@ import subprocess
 
 
 def base_dir():
-    #与 main.py 里 get_executable_directory 的逻辑一致
+    #脚本位于 src/packs/ 子目录，需再上两层到仓库根；打包后用可执行文件所在目录
+    #与 main.py 里 get_executable_directory 的逻辑一致（仅非打包分支多上两层）
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 BASE_DIR = base_dir()
 LANGUAGE_DIR = os.path.join(BASE_DIR, "language")
 AIM_PATH = os.path.join(BASE_DIR, "aim")                 #根目录的 aim 联接
 CONFIG_PATH = os.path.join(LANGUAGE_DIR, "active.json")  #记录当前选择
+
+
+#语言代码 -> 显示用的中文名。新增语言时在这里加一项，GUI 会自动从这里读取，
+#不用改 main.py。找不到的语言代码原样返回。
+LANG_LABELS = {'EN': '英语', 'JP': '日语'}
+
+
+def lang_label(code):
+    #语言代码转中文名（找不到返回原代码），供 GUI 显示下拉项和状态文字
+    if not code:
+        return code
+    return LANG_LABELS.get(code, code)
 
 
 #-----------基础工具-----------

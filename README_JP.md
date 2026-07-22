@@ -161,15 +161,19 @@ pyinstaller -D -i resource/main.ico main.py
 
 ```
 Magia_Exedra_auto/
-├── main.py                  # GUI エントリ：ワーカーの生成／起動／停止とパラメータ受け渡しのみ
-├── workers/                 # 周回実行ロジックパッケージ（GUI と分離）
-│   ├── base.py              # ワーカー基底クラス（実行／停止状態、リトライとタイムアウト停止）
-│   ├── link_raid.py         # Link Raid 周回フロー
-│   └── crystalis.py         # Crystalis 周回フロー
-├── click_action.py          # 高レベルクリック動作（テンプレート反復・座標クリック・ドラッグ）
-├── click_behavior.py        # 低レベル操作（スクショ・マッチング・クリック・ウィンドウフォーカス）
-├── language_switcher.py     # 言語／解像度切り替え（ジャンクション管理）
-├── image_scaler.py          # 素材スケーリング（2K → 他の解像度）
+├── main.py                  # GUI エントリ：レジストリを走査してワーカーの生成／起動／停止とパラメータ受け渡しを行う
+├── src/                     # ソースパッケージ
+│   ├── workers/             # 周回実行ロジックパッケージ（GUI と分離）
+│   │   ├── registry.py      # レジストリ：ワーカーが @register でパラメータ自己記述、GUI が自動生成
+│   │   ├── base.py          # ワーカー基底クラス（実行／停止状態、リトライとタイムアウト停止）
+│   │   ├── link_raid.py     # Link Raid 周回フロー
+│   │   └── crystalis.py     # Crystalis 周回フロー
+│   ├── click/               # クリックモジュールパッケージ
+│   │   ├── click_action.py  # 高レベルクリック動作（テンプレート反復・座標クリック・ドラッグ）
+│   │   └── click_behavior.py# 低レベル操作（スクショ・マッチング・クリック・ウィンドウフォーカス）
+│   └── packs/               # テンプレートパック管理（標準ライブラリのみ、単体実行可）
+│       ├── language_switcher.py # 言語／解像度切り替え（ジャンクション管理）
+│       └── image_scaler.py  # 素材スケーリング（2K -> 他の解像度）
 ├── language/                # テンプレートパックディレクトリ
 │   ├── EN/                  # 英語
 │   │   ├── EN_1280x720/     # 720p（スケーリング生成）
@@ -179,7 +183,6 @@ Magia_Exedra_auto/
 │   └── JP/                  # 日本語
 │       └── ...
 ├── aim/                     # 実行時ジャンクション、現在使用中のテンプレートパックを指す
-├── screenshot/              # 実行時スクリーンショット保存ディレクトリ
 ├── resource/
 │   └── main.ico             # プログラムアイコン
 ├── tools/

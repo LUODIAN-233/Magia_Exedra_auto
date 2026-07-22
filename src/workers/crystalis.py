@@ -10,10 +10,26 @@
 
 import time
 
-import click_action
+from src.click import click_action
 from .base import BaseWorker, BATTLE_TIMEOUT
+from .registry import register, ParamSpec
 
 
+@register(
+    'crystalis',
+    '自动刷晶花，需要在play界面启动',
+    params=[
+        ParamSpec(
+            'lp_recover_times',
+            '刷晶花部分\n晶花挂机要喝体力药几次',
+            kind='lp_recover',
+            min=0,
+            max=8,
+            default=8,
+        ),
+    ],
+    start_hint='需要在选择完成关卡和队伍的界面启动。也就是点一下play就进入战斗的界面',
+)
 class CrystalisWorker(BaseWorker):
     def __init__(self, lp_recover_times=9):
         super().__init__()

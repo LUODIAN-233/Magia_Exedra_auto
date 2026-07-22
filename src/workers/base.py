@@ -13,7 +13,7 @@ import threading
 
 from PySide6.QtCore import QThread, Signal
 
-import click_action
+from src.click import click_action
 
 
 #普通界面等待超时（秒），超时后安全停止

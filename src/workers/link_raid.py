@@ -10,10 +10,33 @@
 
 import time
 
-import click_action
+from src.click import click_action
 from .base import BaseWorker, BATTLE_TIMEOUT, retry_until
+from .registry import register, ParamSpec
 
 
+@register(
+    'link_raid',
+    'link raid挂机启动',
+    params=[
+        ParamSpec(
+            'level_choice',
+            'link raid挂机部分\n选择link raid要挂机的等级',
+            kind='choice',
+            choices=[6, 7, 8, 9, 10, 11, 12],
+            default=6,
+        ),
+        ParamSpec(
+            'lp_recover_times',
+            'link raid挂机要喝体力药几次',
+            kind='lp_recover',
+            min=0,
+            max=10,
+            default=0,
+        ),
+    ],
+    start_hint='需要在游戏主界面启动本挂机系统',
+)
 class LinkRaidWorker(BaseWorker):
     def __init__(self, level=6, lp_recover_times=1):
         super().__init__()

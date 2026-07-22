@@ -9,28 +9,19 @@ if getattr(sys, "frozen", False):
 
 from datetime import datetime
 
-from PySide6.QtWidgets import QApplication, QButtonGroup, QHBoxLayout, QRadioButton, QPlainTextEdit, QWidget, QPushButton, QLabel, QLineEdit, QComboBox, QVBoxLayout
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QRadioButton,
+                               QPlainTextEdit, QWidget, QPushButton, QLabel, QLineEdit,
+                               QComboBox, QVBoxLayout)
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon, QIntValidator
 
 #其他自己写的文件
-import language_switcher
-import image_scaler
-from workers import LinkRaidWorker, CrystalisWorker
+from src.packs import language_switcher, image_scaler
+from src.workers import get_registry
 
 
 # pyinstaller.exe -D -i resource/main.ico  main.py
 #这个是导出用的
-
-# ---- GUI 参数状态（仅作为启动入口的输入，挂机运行逻辑已移到 workers/ 包）----
-#link raid 挂机选择的等级，默认 6，和选择框相同
-link_raid_lv_choice = 6
-
-#link raid 喝体力药的次数 1 是不喝药，4 是喝三次，要多一次
-link_raid_lp_recover_times = 1
-
-#晶花喝体力药的次数 1 是不喝药，4 是喝三次，要多一次
-crystalis_lp_recover_times = 9
 
 
 class LanguageSwitcherWidget(QWidget):
@@ -39,8 +30,6 @@ class LanguageSwitcherWidget(QWidget):
     switched = Signal(str)  #切换完成或失败时发出，用于在日志框显示
     scaleFinished = Signal()
     scalingChanged = Signal(bool)
-    #语言代码 -> 显示用的中文名；新增语言时在这里加一项
-    LANG_LABELS = {'EN': '英语', 'JP': '日语'}
     def __init__(self, busy_check=None):
         super().__init__()
         self.busy_check = busy_check or (lambda: False)
@@ -69,7 +58,8 @@ class LanguageSwitcherWidget(QWidget):
         self._refresh()
 
     def _lang_label(self, code):
-        return self.LANG_LABELS.get(code, code)
+        #语言中文名从 language_switcher 统一读取，新增语言只改 packs 不改 GUI
+        return language_switcher.lang_label(code)
 
     def _refresh(self):
         #启动时保证 aim 可用，再扫描 pack 填充下拉框
@@ -192,7 +182,10 @@ class LanguageSwitcherWidget(QWidget):
             self._update_status(lang, res, out)
         self.switched.emit(out)
 
+
 class mywindow(QWidget):
+    #GUI 入口。遍历 workers 的 REGISTRY 自动为每个挂机模式生成参数控件和启动按钮，
+    #新增挂机模式只需在 workers/ 里写一个文件并 @register，不用改这里的 GUI 代码。
     def __init__(self):
         super().__init__()
 
@@ -209,151 +202,25 @@ class mywindow(QWidget):
         #框体顶部的提示
         self.textedit_1_title = QLabel('输出运行结果的框框')
         # 用于输出运行日志的框体
-        self.textedit_1=QPlainTextEdit()
+        self.textedit_1 = QPlainTextEdit()
 
-    #各种进程
-        #刷raid进程（运行逻辑在 workers/link_raid.py，GUI 只负责启动/停止和传参）
-        self.workthread_1 = LinkRaidWorker()
-        self.workthread_1.signal.connect(lambda x :self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {x}"))
-        # self.workthread_1.finished.connect(lambda :self.workthread_1.deleteLater()) #这一条不知道为啥加入了就无法二次启动了
-        self.workthread_1.finished.connect(lambda: print('link raid挂机结束'))
-        self.workthread_1.finished.connect(lambda: self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: link raid挂机结束或被主动停止\n"))
-        self.workthread_1.finished.connect(self._automation_finished)
+        #遍历注册表，为每个挂机模式创建 worker + 参数控件 + 启动按钮
+        #每个 entry 记录：meta、worker、start_button、param_layout、所有可禁用控件、参数 getter
+        self._entries = []
+        for meta in get_registry():
+            self._entries.append(self._build_worker_entry(meta))
 
-
-        self.workthread_2 = CrystalisWorker()
-        self.workthread_2.signal.connect(lambda x :self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {x}"))
-        # self.workthread_1.finished.connect(lambda :self.workthread_1.deleteLater()) #这一条不知道为啥加入了就无法二次启动了
-        self.workthread_2.finished.connect(lambda: print('crystalis挂机结束'))
-        self.workthread_2.finished.connect(lambda: self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: crystalis挂机结束或被主动停止\n"))
-        self.workthread_2.finished.connect(self._automation_finished)
-
-    #各种按钮
-        #停止按钮，按下启动停止进程，会调用工作线程的 stop()
-        self.button_1=QPushButton('停下当前运行的脚本')
+        #停止按钮，按下启动停止进程，会调用所有工作线程的 stop()
+        self.button_1 = QPushButton('停下当前运行的脚本')
         self.button_1.clicked.connect(self._stop_automation)
 
         #语言/分辨率切换控件，切换 aim 联接指向
         self.lang_switcher = LanguageSwitcherWidget(self._automation_running)
-        self.lang_switcher.switched.connect(lambda x :self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {x}"))
-        self.lang_switcher.switched.connect(lambda : self.setWindowIcon(QIcon('./resource/main.ico')))
+        self.lang_switcher.switched.connect(lambda x: self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {x}"))
+        self.lang_switcher.switched.connect(lambda: self.setWindowIcon(QIcon('./resource/main.ico')))
         self.lang_switcher.scalingChanged.connect(self._scaling_changed)
 
-        #启动link raid挂机进程
-        self.button_2=QPushButton('link raid挂机启动')
-        self.button_2.clicked.connect(self._start_link_raid)
-
-        #启动link raid挂机进程
-        self.button_3=QPushButton('自动刷晶花，需要在play界面启动')
-        self.button_3.clicked.connect(self._start_crystalis)
-
-    #link raid等级选择器
-
-        self.group_choice_lv_label=QLabel('link raid挂机部分\n选择link raid要挂机的等级')
-        #按钮和加入组别
-        self.group_choice_lv = QButtonGroup(self)#等级选择的组
-        self.group_choice_lv.setExclusive(True)
-
-        self.lv_6_btn= QRadioButton('lv6')
-        self.group_choice_lv.addButton(self.lv_6_btn)
-        self.lv_6_btn.clicked.connect(lambda : self.change_value(6))
-
-        self.lv_7_btn = QRadioButton('lv7')
-        self.group_choice_lv.addButton(self.lv_7_btn)
-        self.lv_7_btn.clicked.connect(lambda: self.change_value(7))
-
-        self.lv_8_btn = QRadioButton('lv8')
-        self.group_choice_lv.addButton(self.lv_8_btn)
-        self.lv_8_btn.clicked.connect(lambda: self.change_value(8))
-
-        self.lv_9_btn = QRadioButton('lv9')
-        self.group_choice_lv.addButton(self.lv_9_btn)
-        self.lv_9_btn.clicked.connect(lambda: self.change_value(9))
-
-        self.lv_10_btn = QRadioButton('lv10')
-        self.group_choice_lv.addButton(self.lv_10_btn)
-        self.lv_10_btn.clicked.connect(lambda: self.change_value(10))
-
-        self.lv_11_btn = QRadioButton('lv11')
-        self.group_choice_lv.addButton(self.lv_11_btn)
-        self.lv_11_btn.clicked.connect(lambda: self.change_value(11))
-
-        self.lv_12_btn = QRadioButton('lv12')
-        self.group_choice_lv.addButton(self.lv_12_btn)
-        self.lv_12_btn.clicked.connect(lambda: self.change_value(12))
-
-        self.lv_6_btn.setChecked(True)#默认选6
-
-        #按钮的排列
-        self.lv_choice_layout_1=QHBoxLayout()#横向排列
-        self.lv_choice_layout_1.addWidget(self.group_choice_lv_label)#这是标识符，后面开始是按钮
-
-        self.lv_choice_layout_2 = QHBoxLayout()  # 横向排列2
-        self.lv_choice_layout_2.addWidget(self.lv_6_btn)
-        self.lv_choice_layout_2.addWidget(self.lv_7_btn)
-        self.lv_choice_layout_2.addWidget(self.lv_8_btn)
-
-        self.lv_choice_layout_3 = QHBoxLayout()  # 横向排列2
-        self.lv_choice_layout_3.addWidget(self.lv_9_btn)
-        self.lv_choice_layout_3.addWidget(self.lv_10_btn)
-        self.lv_choice_layout_3.addWidget(self.lv_11_btn)
-
-        self.lv_choice_layout_4 = QHBoxLayout()  # 横向排列3
-        self.lv_choice_layout_4.addWidget(self.lv_12_btn)
-
-        self.lv_choice_layout_row = QVBoxLayout()  # 横向排列2
-        self.lv_choice_layout_row.addLayout(self.lv_choice_layout_1)
-        self.lv_choice_layout_row.addLayout(self.lv_choice_layout_2)
-        self.lv_choice_layout_row.addLayout(self.lv_choice_layout_3)
-        self.lv_choice_layout_row.addLayout(self.lv_choice_layout_4)
-
-    #link raid 喝药次数选择器
-        self.group_link_raid_lp_recover_label=QLabel('link raid挂机要喝体力药几次')
-        self.link_raid_lp_recover_layout_raw = QVBoxLayout()
-        self.link_raid_lp_recover_layout_2=QHBoxLayout()
-
-        self.lp_recover_min_btn, self.lp_recover_minus_btn, self.lp_recover_input, self.lp_recover_plus_btn, self.lp_recover_max_btn = self.create_lp_recover_input(
-            min_num=0,
-            max_num=10,
-            default_num=link_raid_lp_recover_times - 1,
-            change_func=self.change_value_lp_recover
-        )
-
-        self.link_raid_lp_recover_layout_2.addWidget(self.lp_recover_min_btn)
-        self.link_raid_lp_recover_layout_2.addWidget(self.lp_recover_minus_btn)
-        self.link_raid_lp_recover_layout_2.addWidget(self.lp_recover_input)
-        self.link_raid_lp_recover_layout_2.addWidget(self.lp_recover_plus_btn)
-        self.link_raid_lp_recover_layout_2.addWidget(self.lp_recover_max_btn)
-
-        self.link_raid_lp_recover_layout_raw.addWidget(self.group_link_raid_lp_recover_label) # 这是标识符，后面开始是按钮
-        self.link_raid_lp_recover_layout_raw.addLayout(self.link_raid_lp_recover_layout_2)
-
-    #刷圣遗物界面布局器
-        self.group_crystalis_lp_recover_label = QLabel('刷晶花部分\n晶花挂机要喝体力药几次')
-
-    #刷圣遗物布局
-        self.crystalis_lp_recover_layout = QVBoxLayout()
-
-        self.crystalis_lp_recover_layout_row1 = QHBoxLayout()
-        self.crystalis_lp_recover_min_btn, self.crystalis_lp_recover_minus_btn, self.crystalis_lp_recover_input, self.crystalis_lp_recover_plus_btn, self.crystalis_lp_recover_max_btn = self.create_lp_recover_input(
-            min_num=0,
-            max_num=8,
-            default_num=crystalis_lp_recover_times - 1,
-            change_func=self.change_value_crystalis_lp_recover_times
-        )
-        self.crystalis_lp_recover_layout_row1.addWidget(self.crystalis_lp_recover_min_btn)
-        self.crystalis_lp_recover_layout_row1.addWidget(self.crystalis_lp_recover_minus_btn)
-        self.crystalis_lp_recover_layout_row1.addWidget(self.crystalis_lp_recover_input)
-        self.crystalis_lp_recover_layout_row1.addWidget(self.crystalis_lp_recover_plus_btn)
-        self.crystalis_lp_recover_layout_row1.addWidget(self.crystalis_lp_recover_max_btn)
-
-        self.crystalis_lp_recover_layout.addWidget(self.group_crystalis_lp_recover_label)
-        self.crystalis_lp_recover_layout.addLayout(self.crystalis_lp_recover_layout_row1)
-        self.crystalis_lp_recover_layout.addWidget(self.button_3)
-
-
-
-    #主页布局
+        #主页布局
         self.mainlayout = QVBoxLayout()
 
         #顶部提示框
@@ -365,65 +232,118 @@ class mywindow(QWidget):
         #语言/分辨率切换
         self.mainlayout.addWidget(self.lang_switcher)
 
-        #先择linkraid等级，回体力次数部分
-        self.mainlayout.addLayout(self.lv_choice_layout_row)
-        self.mainlayout.addLayout(self.link_raid_lp_recover_layout_raw)
-
-        #link raid挂机启动按钮
-        self.mainlayout.addWidget(self.button_2)
-
-
-        #圣遗物部分
-
-        self.mainlayout.addLayout(self.crystalis_lp_recover_layout)
+        #每个挂机模式：参数控件区 + 启动按钮
+        for entry in self._entries:
+            self.mainlayout.addLayout(entry['param_layout'])
+            self.mainlayout.addWidget(entry['start_button'])
 
         self.setLayout(self.mainlayout)
 
-    def _automation_running(self):
-        return (self.workthread_1.isRunning() or self.workthread_2.isRunning()
-                or getattr(self.lang_switcher, '_scaling', False))
+    def _build_worker_entry(self, meta):
+        #为一个挂机模式创建 worker、参数控件和启动按钮，返回 entry 字典
+        worker = meta.worker_class()
+        log_prefix = f"[{datetime.now().strftime('%H:%M:%S')}]: "
+        worker.signal.connect(lambda x: self.textedit_1.appendPlainText(log_prefix + x))
+        display_name = meta.name.replace('_', ' ')
+        worker.finished.connect(lambda n=display_name: print(f'{n}挂机结束'))
+        worker.finished.connect(lambda n=display_name: self.textedit_1.appendPlainText(
+            f"[{datetime.now().strftime('%H:%M:%S')}]: {n}挂机结束或被主动停止\n"))
+        worker.finished.connect(self._automation_finished)
 
-    def _stop_automation(self):
-        #请求两个工作线程停止；互斥运行时只有一个在跑，对没在跑的调用 stop() 也是安全的
-        self.workthread_1.stop()
-        self.workthread_2.stop()
+        #参数控件区
+        param_layout = QVBoxLayout()
+        getters = {}
+        controls = []
+        for spec in meta.params:
+            sub_layout, getter, sub_controls = self._build_param_widget(spec)
+            param_layout.addLayout(sub_layout)
+            getters[spec.key] = getter
+            controls.extend(sub_controls)
 
-    def _set_automation_controls(self, enabled):
-        self.button_2.setEnabled(enabled)
-        self.button_3.setEnabled(enabled)
-        self.lang_switcher.setEnabled(enabled)
+        #启动按钮
+        start_button = QPushButton(meta.label)
+        entry = {
+            'meta': meta,
+            'worker': worker,
+            'start_button': start_button,
+            'param_layout': param_layout,
+            'getters': getters,
+            'controls': controls,
+        }
+        start_button.clicked.connect(lambda _checked=False, e=entry: self._start_worker(e))
+        return entry
 
-    def _start_link_raid(self):
-        if self._automation_running():
-            self.textedit_1.appendPlainText('已有挂机任务运行中，请先停止。')
-            return
-        #把 GUI 当前参数传给工作线程，运行逻辑在 workers/link_raid.py
-        self.workthread_1.level_choice = link_raid_lv_choice
-        self.workthread_1.lp_recover_times = link_raid_lp_recover_times
-        self._set_automation_controls(False)
-        self.workthread_1.start()
+    def _build_param_widget(self, spec):
+        #根据 ParamSpec.kind 生成对应控件，返回 (QLayout, getter函数, 可禁用控件列表)
+        layout = QVBoxLayout()
+        label = QLabel(spec.label)
+        layout.addWidget(label)
+        controls = [label]
 
-    def _start_crystalis(self):
-        if self._automation_running():
-            self.textedit_1.appendPlainText('已有挂机任务运行中，请先停止。')
-            return
-        #运行逻辑在 workers/crystalis.py
-        self.workthread_2.lp_recover_times = crystalis_lp_recover_times
-        self._set_automation_controls(False)
-        self.workthread_2.start()
+        if spec.kind == 'choice':
+            #单选按钮组，每 3 个一行
+            group = QButtonGroup(self)
+            group.setExclusive(True)
+            buttons = []
+            for val in spec.choices:
+                btn = QRadioButton(str(val))
+                if val == spec.default:
+                    btn.setChecked(True)
+                group.addButton(btn)
+                buttons.append(btn)
+            row = QHBoxLayout()
+            for i, btn in enumerate(buttons):
+                row.addWidget(btn)
+                if (i + 1) % 3 == 0:
+                    layout.addLayout(row)
+                    row = QHBoxLayout()
+            if row.count() > 0:
+                layout.addLayout(row)
+            choice_pairs = list(zip(buttons, spec.choices))
+            def getter():
+                for btn, val in choice_pairs:
+                    if btn.isChecked():
+                        return val
+                return spec.default
+            controls.extend(buttons)
 
-    def _automation_finished(self):
-        if not self._automation_running():
-            self._set_automation_controls(True)
+        elif spec.kind == 'lp_recover':
+            #喝体力药次数：最小/-1/输入/+1/最大 五件套；显示的是"喝几次"，传给 worker 时 +1
+            min_btn, minus_btn, input_edit, plus_btn, max_btn = self.create_lp_recover_input(
+                min_num=spec.min, max_num=spec.max, default_num=spec.default,
+            )
+            row = QHBoxLayout()
+            row.addWidget(min_btn)
+            row.addWidget(minus_btn)
+            row.addWidget(input_edit)
+            row.addWidget(plus_btn)
+            row.addWidget(max_btn)
+            layout.addLayout(row)
+            lo, hi = spec.min, spec.max
+            def getter():
+                text = input_edit.text()
+                if text == '':
+                    return lo + 1
+                return max(lo, min(hi, int(text))) + 1  #显示值 +1 = 存储值
+            controls.extend([min_btn, minus_btn, input_edit, plus_btn, max_btn])
 
-    def _scaling_changed(self, scaling):
-        if scaling:
-            self.button_2.setEnabled(False)
-            self.button_3.setEnabled(False)
-        elif not self.workthread_1.isRunning() and not self.workthread_2.isRunning():
-            self._set_automation_controls(True)
+        else:  # 'int' 普通整数输入，留作扩展
+            input_edit = QLineEdit(str(spec.default))
+            input_edit.setValidator(QIntValidator(spec.min, spec.max, self))
+            input_edit.setAlignment(Qt.AlignCenter)
+            layout.addWidget(input_edit)
+            lo, hi = spec.min, spec.max
+            def getter():
+                text = input_edit.text()
+                if text == '':
+                    return lo
+                return max(lo, min(hi, int(text)))
+            controls.append(input_edit)
 
-    def create_lp_recover_input(self, min_num, max_num, default_num, change_func):
+        return layout, getter, controls
+
+    def create_lp_recover_input(self, min_num, max_num, default_num):
+        #喝药次数的五件套输入控件。值由调用方用 getter 读取，不再需要 change_func 回调。
         default_num = max(min_num, min(max_num, default_num))
 
         min_btn = QPushButton('最小')
@@ -439,7 +359,7 @@ class mywindow(QWidget):
         value_input.setAlignment(Qt.AlignCenter)
         value_input.setFixedWidth(40)
 
-        def get_current_num():
+        def current_num():
             text = value_input.text()
             if text == '':
                 return min_num
@@ -447,49 +367,61 @@ class mywindow(QWidget):
 
         def set_visible_num(value_num):
             value_num = max(min_num, min(max_num, value_num))
-            if value_input.text() == str(value_num):
-                change_func(value_num + 1)
-            else:
+            if value_input.text() != str(value_num):
                 value_input.setText(str(value_num))
 
-        def change_from_input(text):
-            if text == '':
-                return
-            value_num = max(min_num, min(max_num, int(text)))
-            change_func(value_num + 1)
-
-        def fix_input():
-            set_visible_num(get_current_num())
-
         min_btn.clicked.connect(lambda: set_visible_num(min_num))
-        minus_btn.clicked.connect(lambda: set_visible_num(get_current_num() - 1))
-        plus_btn.clicked.connect(lambda: set_visible_num(get_current_num() + 1))
+        minus_btn.clicked.connect(lambda: set_visible_num(current_num() - 1))
+        plus_btn.clicked.connect(lambda: set_visible_num(current_num() + 1))
         max_btn.clicked.connect(lambda: set_visible_num(max_num))
-        value_input.textChanged.connect(change_from_input)
-        value_input.editingFinished.connect(fix_input)
+        value_input.editingFinished.connect(lambda: set_visible_num(current_num()))
 
         return min_btn, minus_btn, value_input, plus_btn, max_btn
 
-    #用于改变link raid选择的等级
-    def change_value(self,value_num):
-        global link_raid_lv_choice
-        print(f'link raid的等级修改之前是{link_raid_lv_choice}\n')
-        link_raid_lv_choice=value_num
-        print(f'link raid的等级变成了{value_num}\n')
+    def _automation_running(self):
+        #任何一个 worker 在跑，或正在缩放素材，都算"忙"
+        return any(e['worker'].isRunning() for e in self._entries) \
+            or getattr(self.lang_switcher, '_scaling', False)
 
-    #用于改变link raid选择的等级
-    def change_value_lp_recover(self,value_num):
-        global link_raid_lp_recover_times
-        print(f'link_raid_lp_recover_times修改之前是{link_raid_lp_recover_times}\n')
-        link_raid_lp_recover_times=value_num
-        print(f'link_raid_lp_recover_times的数据变成了{value_num}\n')
+    def _stop_automation(self):
+        #请求所有工作线程停止；互斥运行时只有一个在跑，对没在跑的调用 stop() 也是安全的
+        for e in self._entries:
+            e['worker'].stop()
 
-    # 用于改变晶花吃体力药次数
-    def change_value_crystalis_lp_recover_times(self,value_num):
-        global crystalis_lp_recover_times
-        print(f'link_raid_lp_recover_times修改之前是{crystalis_lp_recover_times}\n')
-        crystalis_lp_recover_times=value_num
-        print(f'link_raid_lp_recover_times的数据变成了{value_num}\n')
+    def _set_automation_controls(self, enabled):
+        #统一启用/禁用所有启动按钮、参数控件和语言切换器（停止按钮始终可用）
+        for e in self._entries:
+            e['start_button'].setEnabled(enabled)
+            for c in e['controls']:
+                c.setEnabled(enabled)
+        self.lang_switcher.setEnabled(enabled)
+
+    def _start_worker(self, entry):
+        if self._automation_running():
+            self.textedit_1.appendPlainText('已有挂机任务运行中，请先停止。')
+            return
+        #收集 GUI 参数到 worker（lp_recover 已在 getter 里 +1 为存储值）
+        worker = entry['worker']
+        for key, getter in entry['getters'].items():
+            setattr(worker, key, getter())
+        if entry['meta'].start_hint:
+            self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {entry['meta'].start_hint}")
+        self._set_automation_controls(False)
+        worker.start()
+
+    def _automation_finished(self):
+        #某个 worker 结束时：若已无 worker 在跑（且没在缩放），恢复所有控件
+        if not self._automation_running():
+            self._set_automation_controls(True)
+
+    def _scaling_changed(self, scaling):
+        if scaling:
+            for e in self._entries:
+                e['start_button'].setEnabled(False)
+                for c in e['controls']:
+                    c.setEnabled(False)
+        elif not self._automation_running():
+            self._set_automation_controls(True)
 
 
 if __name__ == '__main__':
