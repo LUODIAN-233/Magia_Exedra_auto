@@ -41,6 +41,8 @@
 - Brings the game window to the foreground on startup
 - Stop button can interrupt any farming task at any time
 - The two farming modes are mutually exclusive; template switching and refresh are disabled while a task is running
+- Select a farming script from a dropdown; only that script's parameters are shown, so new modes do not keep extending the window vertically
+- Includes a `检查更新` entry; the button is currently reserved because no version source has been configured
 - Automatically stops safely if a normal screen is not recognized within 60 seconds or a battle within 30 minutes
 - Recognition captures only the game window; missing windows or invalid templates are reported instead of crashing
 - Language / resolution switching (supports English, Japanese; multi-resolution assets auto-scaled)
@@ -97,7 +99,7 @@ Download a release, extract it, and run the corresponding EXE (all dependencies 
 
 ```bash
 # Install dependencies (the project has no requirements.txt; install manually)
-pip install pyautogui PySide6 opencv-python pywinctl
+pip install pyautogui PySide6 opencv-python pywinctl Pillow
 
 # Run
 python main.py
@@ -114,16 +116,18 @@ pyinstaller -D -i resource/main.ico main.py
 
 Must be started on the game's main screen (Lighthouse screen)
 
+- Select `link raid挂机启动` from the script dropdown
 - Select the level to farm (LV6 ~ LV12)
 - Set the stamina-potion drink count (0 ~ 10)
-- Click "**link raid挂机启动**" (the Link Raid start button)
+- Click "**启动：link raid挂机启动**" (start the selected Link Raid script)
 
 ### 2. Crystalis farming
 
 Must be started on the team-select screen (the screen where clicking `play` enters battle)
 
+- Select `自动刷晶花，需要在play界面启动` from the script dropdown
 - Set the stamina-potion drink count (0 ~ 8)
-- Click "**自动刷晶花，需要在play界面启动**" (the Crystalis start button)
+- Click "**启动：自动刷晶花，需要在play界面启动**" (start the selected Crystalis script)
 
 ### 3. Language / resolution switching
 
@@ -144,6 +148,11 @@ Automatically scales the 2K (2560×1440) source assets to other resolutions:
 > 720p / 1080p are downscaled and of good quality; 4K is upscaled (non-integer resampling) and slightly softer.
 > A target is generated when missing or when its 2K source content changes. Derived templates removed from the source pack are cleaned automatically. The list refreshes after scaling.
 
+### 5. Check for updates
+
+- Clicking `检查更新` reports the current update status in the log
+- No update source is configured yet, so this button is currently only an entry point for a future GitHub Releases or update-service integration
+
 ---
 
 ## Notes
@@ -161,7 +170,7 @@ Automatically scales the 2K (2560×1440) source assets to other resolutions:
 
 ```
 Magia_Exedra_auto/
-├── main.py                  # GUI entry: iterates the registry to build / start / stop workers and pass params
+├── main.py                  # GUI entry: selects scripts, switches parameter pages, starts/stops workers, and passes params
 ├── src/                     # Source package
 │   ├── workers/             # automation run-logic package (decoupled from the GUI)
 │   │   ├── registry.py      # Registry: workers self-describe params via @register, GUI auto-generates widgets

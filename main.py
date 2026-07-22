@@ -11,13 +11,18 @@ from datetime import datetime
 
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QRadioButton,
                                QPlainTextEdit, QWidget, QPushButton, QLabel, QLineEdit,
-                               QComboBox, QVBoxLayout)
+                               QComboBox, QSizePolicy, QStackedWidget, QVBoxLayout)
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon, QIntValidator
 
 #其他自己写的文件
 from src.packs import language_switcher, image_scaler
-from src.workers import get_registry
+
+
+def get_worker_registry():
+    #PyAutoGUI 导入时会设置进程 DPI 模式，因此必须等 QApplication 先完成 Qt 的 DPI 初始化。
+    from src.workers import get_registry
+    return get_registry()
 
 
 # pyinstaller.exe -D -i resource/main.ico  main.py
@@ -193,7 +198,7 @@ class LanguageSwitcherWidget(QWidget):
 
 
 class mywindow(QWidget):
-    #GUI 入口。遍历 workers 的 REGISTRY 自动为每个挂机模式生成参数控件和启动按钮，
+    #GUI 入口。遍历 workers 的 REGISTRY 自动生成脚本选项和各自的参数页，
     #新增挂机模式只需在 workers/ 里写一个文件并 @register，不用改这里的 GUI 代码。
     def __init__(self):
         super().__init__()
@@ -214,15 +219,31 @@ class mywindow(QWidget):
         self.textedit_1 = QPlainTextEdit()
         self.textedit_1.document().setMaximumBlockCount(2000)
 
-        #遍历注册表，为每个挂机模式创建 worker + 参数控件 + 启动按钮
-        #每个 entry 记录：meta、worker、start_button、param_layout、所有可禁用控件、参数 getter
+        #遍历注册表，为每个挂机模式创建 worker 和参数页；下拉选择后只显示当前脚本的参数。
         self._entries = []
-        for meta in get_registry():
+        for meta in get_worker_registry():
             self._entries.append(self._build_worker_entry(meta))
+
+        self.scriptTitle = QLabel('选择挂机脚本')
+        self.scriptCombo = QComboBox()
+        self.paramStack = QStackedWidget()
+        self.paramStack.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        for entry in self._entries:
+            self.scriptCombo.addItem(entry['meta'].label)
+            self.paramStack.addWidget(entry['param_widget'])
+        self.scriptCombo.currentIndexChanged.connect(self._script_changed)
+
+        self.startButton = QPushButton()
+        self.startButton.clicked.connect(self._start_selected_worker)
+        self._script_changed(self.scriptCombo.currentIndex())
 
         #停止按钮，按下启动停止进程，会调用所有工作线程的 stop()
         self.button_1 = QPushButton('停下当前运行的脚本')
         self.button_1.clicked.connect(self._stop_automation)
+
+        #更新来源尚未确定，先保留统一入口，之后只需替换槽函数里的实现。
+        self.checkUpdateBtn = QPushButton('检查更新')
+        self.checkUpdateBtn.clicked.connect(self._check_update)
 
         #语言/分辨率切换控件，切换 aim 联接指向
         self.lang_switcher = LanguageSwitcherWidget(self._automation_running)
@@ -242,15 +263,17 @@ class mywindow(QWidget):
         #语言/分辨率切换
         self.mainlayout.addWidget(self.lang_switcher)
 
-        #每个挂机模式：参数控件区 + 启动按钮
-        for entry in self._entries:
-            self.mainlayout.addLayout(entry['param_layout'])
-            self.mainlayout.addWidget(entry['start_button'])
+        #脚本选择区：只展示当前选择脚本的参数，新增模式不会继续向下堆叠界面。
+        self.mainlayout.addWidget(self.scriptTitle)
+        self.mainlayout.addWidget(self.scriptCombo)
+        self.mainlayout.addWidget(self.paramStack)
+        self.mainlayout.addWidget(self.startButton)
+        self.mainlayout.addWidget(self.checkUpdateBtn)
 
         self.setLayout(self.mainlayout)
 
     def _build_worker_entry(self, meta):
-        #为一个挂机模式创建 worker、参数控件和启动按钮，返回 entry 字典
+        #为一个挂机模式创建 worker 和独立参数页，返回 entry 字典
         worker = meta.worker_class()
         worker.signal.connect(self._append_log)
         display_name = meta.name.replace('_', ' ')
@@ -268,18 +291,37 @@ class mywindow(QWidget):
             getters[spec.key] = getter
             controls.extend(sub_controls)
 
-        #启动按钮
-        start_button = QPushButton(meta.label)
+        param_widget = QWidget()
+        if not meta.params:
+            param_layout.addWidget(QLabel('该脚本没有可配置参数'))
+        param_widget.setLayout(param_layout)
         entry = {
             'meta': meta,
             'worker': worker,
-            'start_button': start_button,
-            'param_layout': param_layout,
+            'param_widget': param_widget,
             'getters': getters,
             'controls': controls,
         }
-        start_button.clicked.connect(lambda _checked=False, e=entry: self._start_worker(e))
         return entry
+
+    def _script_changed(self, index):
+        if not 0 <= index < len(self._entries):
+            self.startButton.setText('没有可用的挂机脚本')
+            self.startButton.setEnabled(False)
+            return
+        self.paramStack.setCurrentIndex(index)
+        current_page = self.paramStack.currentWidget()
+        if current_page is not None:
+            self.paramStack.setFixedHeight(current_page.sizeHint().height())
+        self.startButton.setText(f"启动：{self._entries[index]['meta'].label}")
+
+    def _start_selected_worker(self):
+        index = self.scriptCombo.currentIndex()
+        if 0 <= index < len(self._entries):
+            self._start_worker(self._entries[index])
+
+    def _check_update(self):
+        self._append_log('检查更新功能已预留，尚未配置版本号和更新来源。')
 
     def _append_log(self, text):
         self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {text}")
@@ -421,9 +463,11 @@ class mywindow(QWidget):
             e['worker'].stop()
 
     def _set_automation_controls(self, enabled):
-        #统一启用/禁用所有启动按钮、参数控件和语言切换器（停止按钮始终可用）
+        #统一启用/禁用脚本选择、启动按钮、参数控件和语言切换器（停止按钮始终可用）
+        self.scriptTitle.setEnabled(enabled)
+        self.scriptCombo.setEnabled(enabled)
+        self.startButton.setEnabled(enabled and bool(self._entries))
         for e in self._entries:
-            e['start_button'].setEnabled(enabled)
             for c in e['controls']:
                 c.setEnabled(enabled)
         self.lang_switcher.setEnabled(enabled)
@@ -431,6 +475,10 @@ class mywindow(QWidget):
     def _start_worker(self, entry):
         if self._automation_running():
             self.textedit_1.appendPlainText('已有挂机任务运行中，请先停止。')
+            return
+        from src.click import click_behavior
+        if click_behavior.find_win('MadokaExedra') is None:
+            self._append_log('未找到游戏窗口 MadokaExedra，本次挂机已停止。请先启动游戏。')
             return
         #收集 GUI 参数到 worker（lp_recover 已在 getter 里 +1 为存储值）
         worker = entry['worker']
@@ -448,8 +496,10 @@ class mywindow(QWidget):
 
     def _scaling_changed(self, scaling):
         if scaling:
+            self.scriptTitle.setEnabled(False)
+            self.scriptCombo.setEnabled(False)
+            self.startButton.setEnabled(False)
             for e in self._entries:
-                e['start_button'].setEnabled(False)
                 for c in e['controls']:
                     c.setEnabled(False)
         elif not self._automation_running():
