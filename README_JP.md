@@ -62,18 +62,17 @@
 ### ワークフロー
 
 ```
-main.py（GUI + ワーカースレッド）
+main.py（GUI エントリ、起動／停止／パラメータ受け渡しのみ）
     │
-    ├── WorkThread_1 ──► click_action ──► click_behavior ──► ゲーム
-    │   (Link Raid)      (テンプレート反復   (マッチング+クリック+ウィンドウ)
-    │                     ＋座標)
+    ├── workers/LinkRaidWorker ──► click_action ──► click_behavior ──► ゲーム
+    │   (Link Raid)               (テンプレート反復＋座標)(マッチング+クリック+ウィンドウ)
     │
-    ├── WorkThread_2 ──► click_action ──► click_behavior ──► ゲーム
+    ├── workers/CrystalisWorker ──► click_action ──► click_behavior ──► ゲーム
     │   (Crystalis)
     │
     └── LanguageSwitcherWidget
           ├── language_switcher（ジャンクション管理）
-          └── image_scaler（2K → 他の解像度）
+          └── image_scaler（2K -> 他の解像度）
 ```
 
 ---
@@ -162,7 +161,11 @@ pyinstaller -D -i resource/main.ico main.py
 
 ```
 Magia_Exedra_auto/
-├── main.py                  # エントリ：GUI + 2 つのワーカースレッド + 言語切替ウィジェット
+├── main.py                  # GUI エントリ：ワーカーの生成／起動／停止とパラメータ受け渡しのみ
+├── workers/                 # 周回実行ロジックパッケージ（GUI と分離）
+│   ├── base.py              # ワーカー基底クラス（実行／停止状態、リトライとタイムアウト停止）
+│   ├── link_raid.py         # Link Raid 周回フロー
+│   └── crystalis.py         # Crystalis 周回フロー
 ├── click_action.py          # 高レベルクリック動作（テンプレート反復・座標クリック・ドラッグ）
 ├── click_behavior.py        # 低レベル操作（スクショ・マッチング・クリック・ウィンドウフォーカス）
 ├── language_switcher.py     # 言語／解像度切り替え（ジャンクション管理）
@@ -188,7 +191,7 @@ Magia_Exedra_auto/
 
 - **戻り値規約**：`2` = 成功／発見／クリック済み、`1` = 未発見／継続リトライ。ブール値ではない。
 - **テンプレート番号**：`click_item_with_result` は `<name>_1.png`、`<name>_2.png`… とファイルが存在しなくなるまで順に試行。変体を追加するには次の番号の画像を置くだけ。
-- **停止フラグ**：`guaji_1`／`guaji_2` は従来の状態値を保持し、スレッドイベントと組み合わせて開始・停止の順序を保証します。
+- **実行／停止状態**：各ワーカースレッドは自身の `_active`（実行中かどうか）と `_stop_event`（GUI の停止イベント）を個別に管理し、グローバルな `guaji` フラグは廃止しました。`stop()` は未起動・終了済みのスレッドに対しても安全で、同じスレッドオブジェクトを繰り返し起動できます。
 
 ---
 

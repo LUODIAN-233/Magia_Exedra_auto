@@ -62,18 +62,17 @@
 ### Workflow
 
 ```
-main.py (GUI + worker threads)
+main.py (GUI entry; only starts/stops workers and passes params)
     │
-    ├── WorkThread_1 ──► click_action ──► click_behavior ──► Game
-    │   (Link Raid)      (template iteration + coordinates)
-    │                                     (match + click + window)
+    ├── workers/LinkRaidWorker ──► click_action ──► click_behavior ──► Game
+    │   (Link Raid)               (template iter + coords) (match + click + window)
     │
-    ├── WorkThread_2 ──► click_action ──► click_behavior ──► Game
+    ├── workers/CrystalisWorker ──► click_action ──► click_behavior ──► Game
     │   (Crystalis)
     │
     └── LanguageSwitcherWidget
           ├── language_switcher (junction management)
-          └── image_scaler (2K → other resolutions)
+          └── image_scaler (2K -> other resolutions)
 ```
 
 ---
@@ -162,7 +161,11 @@ Automatically scales the 2K (2560×1440) source assets to other resolutions:
 
 ```
 Magia_Exedra_auto/
-├── main.py                  # Entry: GUI + two worker threads + language switcher widget
+├── main.py                  # GUI entry: only constructs / starts / stops workers and passes params
+├── workers/                 # automation run-logic package (decoupled from the GUI)
+│   ├── base.py              # worker base class (run/stop state, retry and timeout stop)
+│   ├── link_raid.py         # Link Raid farming flow
+│   └── crystalis.py         # Crystalis farming flow
 ├── click_action.py          # High-level click actions (template iteration, coordinate clicks, drags)
 ├── click_behavior.py        # Low-level ops (screenshot, match, click, window focus)
 ├── language_switcher.py     # Language/resolution switching (junction management)
@@ -188,7 +191,7 @@ Magia_Exedra_auto/
 
 - **Return value convention**: `2` = success / found / clicked; `1` = not found / keep trying. Not booleans.
 - **Template numbering**: `click_item_with_result` tries `<name>_1.png`, `<name>_2.png`... incrementing until a file does not exist; to add a variant, just drop in the next-numbered image.
-- **Stop flags**: `guaji_1` / `guaji_2` retain the original state values and work with thread events to preserve start/stop ordering.
+- **Run/stop state**: each worker thread keeps its own `_active` (whether it is running) and `_stop_event` (the GUI stop event); the global `guaji` flags are gone. `stop()` is safe to call on a not-yet-started or already-finished thread, and one thread object can be restarted repeatedly.
 
 ---
 

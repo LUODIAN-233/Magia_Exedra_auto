@@ -1,4 +1,3 @@
-import time
 import os
 import sys
 import threading
@@ -8,58 +7,30 @@ import winreg
 if getattr(sys, "frozen", False):
     os.environ["OPENCV_SKIP_PYTHON_LOADER"] = "1"
 
-import pyautogui
-
-from pathlib import Path
-
 from datetime import datetime
 
-from PySide6.QtWidgets import QApplication,QButtonGroup,QHBoxLayout,QRadioButton,QPlainTextEdit,QTextEdit,QStyle,QWidget,QToolBox, QMainWindow,QPushButton,QLabel,QLineEdit,QComboBox,QVBoxLayout
-from PySide6.QtCore import Qt, QObject,QThread,Signal
-from PySide6.QtGui import QIcon,QIntValidator
+from PySide6.QtWidgets import QApplication, QButtonGroup, QHBoxLayout, QRadioButton, QPlainTextEdit, QWidget, QPushButton, QLabel, QLineEdit, QComboBox, QVBoxLayout
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QIcon, QIntValidator
 
 #其他自己写的文件
-import click_behavior
-import click_action
 import language_switcher
 import image_scaler
+from workers import LinkRaidWorker, CrystalisWorker
 
 
 # pyinstaller.exe -D -i resource/main.ico  main.py
 #这个是导出用的
 
-#各种全局变量
-#这是任务的1的意思
-guaji_1=3#刷link raid
-
-#挂机选择的等级，默认是6，和选择框相同
+# ---- GUI 参数状态（仅作为启动入口的输入，挂机运行逻辑已移到 workers/ 包）----
+#link raid 挂机选择的等级，默认 6，和选择框相同
 link_raid_lv_choice = 6
 
-#link raid喝体力药的次数 1是不喝药，4是喝三次，要多一次
-link_raid_lp_recover_times=1
+#link raid 喝体力药的次数 1 是不喝药，4 是喝三次，要多一次
+link_raid_lp_recover_times = 1
 
-#这是任务的2的意思
-guaji_2=3#刷圣遗物
-
-#圣遗物喝体力药的次数 1是不喝药，4是喝三次，要多一次
-crystalis_lp_recover_times=9
-
-stop_event_1 = threading.Event()
-stop_event_2 = threading.Event()
-
-RETRY_TIMEOUT = 60
-BATTLE_TIMEOUT = 1800
-
-
-def retry_until(action, is_running, timeout=RETRY_TIMEOUT):
-    deadline = time.monotonic() + timeout
-    while is_running() and time.monotonic() < deadline:
-        result = action()
-        if result == 2:
-            return 2
-        time.sleep(0.5)
-    return 1
-
+#晶花喝体力药的次数 1 是不喝药，4 是喝三次，要多一次
+crystalis_lp_recover_times = 9
 
 
 class LanguageSwitcherWidget(QWidget):
@@ -223,8 +194,6 @@ class LanguageSwitcherWidget(QWidget):
 
 class mywindow(QWidget):
     def __init__(self):
-        global link_raid_lv_choice
-        global link_raid_lp_recover_times
         super().__init__()
 
         #启动时确保 aim 联接可用（aim 被移走时按 config 或第一个可用 pack 自动恢复）
@@ -243,8 +212,8 @@ class mywindow(QWidget):
         self.textedit_1=QPlainTextEdit()
 
     #各种进程
-        #刷raid进程
-        self.workthread_1 = WorkThread_1()
+        #刷raid进程（运行逻辑在 workers/link_raid.py，GUI 只负责启动/停止和传参）
+        self.workthread_1 = LinkRaidWorker()
         self.workthread_1.signal.connect(lambda x :self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {x}"))
         # self.workthread_1.finished.connect(lambda :self.workthread_1.deleteLater()) #这一条不知道为啥加入了就无法二次启动了
         self.workthread_1.finished.connect(lambda: print('link raid挂机结束'))
@@ -252,7 +221,7 @@ class mywindow(QWidget):
         self.workthread_1.finished.connect(self._automation_finished)
 
 
-        self.workthread_2 = WorkThread_2()
+        self.workthread_2 = CrystalisWorker()
         self.workthread_2.signal.connect(lambda x :self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {x}"))
         # self.workthread_1.finished.connect(lambda :self.workthread_1.deleteLater()) #这一条不知道为啥加入了就无法二次启动了
         self.workthread_2.finished.connect(lambda: print('crystalis挂机结束'))
@@ -260,7 +229,7 @@ class mywindow(QWidget):
         self.workthread_2.finished.connect(self._automation_finished)
 
     #各种按钮
-        #停止按钮，按下启动停止进程，会把标识符改变数值，达到停止的效果
+        #停止按钮，按下启动停止进程，会调用工作线程的 stop()
         self.button_1=QPushButton('停下当前运行的脚本')
         self.button_1.clicked.connect(self._stop_automation)
 
@@ -415,11 +384,9 @@ class mywindow(QWidget):
                 or getattr(self.lang_switcher, '_scaling', False))
 
     def _stop_automation(self):
-        global guaji_1, guaji_2
-        stop_event_1.set()
-        stop_event_2.set()
-        guaji_1 = 2
-        guaji_2 = 2
+        #请求两个工作线程停止；互斥运行时只有一个在跑，对没在跑的调用 stop() 也是安全的
+        self.workthread_1.stop()
+        self.workthread_2.stop()
 
     def _set_automation_controls(self, enabled):
         self.button_2.setEnabled(enabled)
@@ -427,22 +394,21 @@ class mywindow(QWidget):
         self.lang_switcher.setEnabled(enabled)
 
     def _start_link_raid(self):
-        global guaji_1
         if self._automation_running():
             self.textedit_1.appendPlainText('已有挂机任务运行中，请先停止。')
             return
-        stop_event_1.clear()
-        guaji_1 = 1
+        #把 GUI 当前参数传给工作线程，运行逻辑在 workers/link_raid.py
+        self.workthread_1.level_choice = link_raid_lv_choice
+        self.workthread_1.lp_recover_times = link_raid_lp_recover_times
         self._set_automation_controls(False)
         self.workthread_1.start()
 
     def _start_crystalis(self):
-        global guaji_2
         if self._automation_running():
             self.textedit_1.appendPlainText('已有挂机任务运行中，请先停止。')
             return
-        stop_event_2.clear()
-        guaji_2 = 1
+        #运行逻辑在 workers/crystalis.py
+        self.workthread_2.lp_recover_times = crystalis_lp_recover_times
         self._set_automation_controls(False)
         self.workthread_2.start()
 
@@ -525,550 +491,6 @@ class mywindow(QWidget):
         crystalis_lp_recover_times=value_num
         print(f'link_raid_lp_recover_times的数据变成了{value_num}\n')
 
-class WorkThread_1 (QThread):
-    signal = Signal(str)
-    def __init__(self):
-        super().__init__()
-        print('WorkThread_1准备就绪\n')
-
-    def _running(self):
-        return guaji_1 == 1 and not stop_event_1.is_set()
-
-    def _click_until(self, picture, name, timeout=RETRY_TIMEOUT):
-        global guaji_1
-        result = retry_until(
-            lambda: click_action.click_item_with_result(self, picture, name),
-            self._running,
-            timeout,
-        )
-        if result == 1 and self._running():
-            self.signal.emit(f'等待{name}超过{timeout}秒，已安全停止。请检查起始界面、模板语言和分辨率。')
-            guaji_1 = 2
-        return result
-    def run(self):
-        print('执行WorkThread_1,两秒钟后启动！\n')
-        self.signal.emit(str('启动link raid挂机'))
-
-
-    #本自动化任务会用到的变量
-        #标识符，代表这个挂机正在运行，1为正常，2为停止
-        global guaji_1
-        #等级选择值
-        global link_raid_lv_choice
-        # 体力是否够打下一把，1是可以，2是不行
-        self.LP_full = 1
-        # 体力药使用次数，1是不用，2是1次，最多4三次
-        self.LP_full_add = link_raid_lp_recover_times
-        # 找多少等级的去打
-        self.level_choice = link_raid_lv_choice
-        # 是否找到需要打的等级，参数为2是找到，1不是，用的点击代码就行寻找
-        self.level_choice_exist = 1
-        #点击play后，因为打了太多导致满了的情况，1代表没满，2代表满了
-        self.join_full=1
-        #找win至少运行成功一次，防止卡
-        self.win_exist = 1
-        #点击play之后，战斗已经结束，1代表没结束，2代表战斗已经结束
-        self.already_end = 1
-        #清理打满状态，指的是清理里面还有没有loss或者win状态的标识，1是清理干净了，2还没清理干净
-        self.join_fill_clean =1
-
-    #以下部分为正式执行内容
-        self.signal.emit(str('具体挂机参数为：'))
-        self.signal.emit(str(f'选择的等级是：{self.level_choice}'))
-        self.signal.emit(str(f'喝体力药的次数是：{self.LP_full_add-1}'))
-        self.signal.emit(str('参数错误请及时暂停'))
-        self.signal.emit(str('需要在游戏主界面启动本挂机系统'))
-
-        if stop_event_1.wait(2):
-            return
-
-        self.into_link_raid()
-
-        while(guaji_1==1 ):
-            self.link_raid_to_backup_requests()
-            if guaji_1 != 1:
-                break
-            self.prepare_battle()#指的就是刷新一下
-            if guaji_1 != 1:
-                break
-            self.check_join_full()#判断右下角的join是不是黑色的，黑色的说明加入对局满了
-            if guaji_1 != 1:
-                break
-            #这里指的是清理打完的局，需要注意的是，这个参数要在没有win之后改成1，这样就跳出循环了
-            self.win_exist=1#这个东西找到一次win之后变成2，否则一直等待
-            while(guaji_1 == 1 and self.join_full==2):
-                self.clean_full()
-            if guaji_1 != 1:
-                break
-            self.find_lv()
-            if guaji_1 != 1:
-                break
-            self.join_battle()
-            if guaji_1 != 1:
-                break
-            #判断是否结束，重新点击后会直接再次加入战斗，函数都在里面写了，不需要重新运行上面的
-            self.check_already_end()
-            if guaji_1 != 1:
-                break
-            self.battle_and_finish()
-
-    #函数
-    #从主界面到link raid界面
-    def into_link_raid(self):
-        result = 1
-
-        if not self._running():
-            return
-        click_action.click_position_scaled(2000, 1000)
-        self.signal.emit(str('把游戏弄到前台，然后随便碰一下中间'))
-        if stop_event_1.wait(0.2):
-            return
-        click_action.click_position_scaled(2400, 1200)
-        self.signal.emit(str('quests点击完成，这一下使用的是位置点击，不是识图，如果没有点到说明其他问题发生了'))
-        time.sleep(0.2)
-
-
-        #在quest界面点击link raid
-        result = self._click_until('./aim/quests/link_raid', 'link_raid')
-        if result == 2:
-            self.signal.emit(str('link_raid点击完成'))
-        result = 1
-
-
-    def link_raid_to_backup_requests(self):
-        result = 1
-
-        #进入到boss大脸的界面，在link raid界面点击backup_requests
-        result = self._click_until('./aim/quests/link_raid/backup_requests', 'backup_requests')
-        if result == 2:
-            self.signal.emit(str('第一层的backup_requests点击完成'))
-        result = 1
-
-        #点击第二层backup_requests，进入到加入界面
-        result = self._click_until('./aim/quests/link_raid/backup_requests/backup_requests', 'backup_requests')
-        if result == 2:
-            self.signal.emit(str('第二层的backup_requests点击完成'))
-        result = 1
-
-    #判断右下角的join是不是黑色的，黑色的代表打满了
-    def check_join_full(self):
-        self.join_full = click_action.find_item_with_result(self, f'./aim/quests/link_raid/backup_requests/no_join', 'no_join')
-        if (self.join_full == 1):
-            self.signal.emit(str('战斗没有打满，正常运行'))
-        else:
-            self.signal.emit(str('战斗已经打满了，需要清理joined battles'))
-
-        result = 1
-        if(self.join_full==2) :
-            # 点击左边的joined battle
-            result = self._click_until('./aim/quests/link_raid/backup_requests/joined_battles', 'joined_battles')
-            if result == 2:
-                self.signal.emit(str('joined_battles点击完成'))
-            result = 1
-
-
-    def clean_full(self):
-        global guaji_1
-        result = 1
-        find_one_win=1
-
-        wait_deadline = time.monotonic() + BATTLE_TIMEOUT
-        while(guaji_1 == 1 and self.win_exist == 1 and time.monotonic() < wait_deadline):
-            self.signal.emit(str(f'进入joined battle，开始清空已经结束的战斗。需要保证第一次能够清除后才会回到寻找战斗界面'))
-            for _ in range(3):
-                if not self._running():
-                    return
-                click_action.move_a_to_b_scaled(1400, 1200, 1400, 400)
-            self.signal.emit(
-                str(f'完成下移，开始找结束的对局'))
-            if stop_event_1.wait(2):
-                return
-            find_one_win = click_action.find_item_with_result(self, './aim/quests/link_raid/joined_battles/win', 'win/lose')
-            self.signal.emit(str(f'寻找win/loss的状态是{find_one_win}，1是没有了，2是还存在。此处没有找到会一直等待到找到为止，否则会无法继续'))
-            if find_one_win==2:
-                self.win_exist=2
-            else:
-                self.signal.emit(str(f'没有看到一场结束的战斗，等待5s后点击刷新，然后继续找'))
-                if stop_event_1.wait(5):
-                    return
-                result = 1
-
-                # 点击刷新
-                result = self._click_until('./aim/quests/link_raid/backup_requests/refresh', 'refresh')
-                if result == 2:
-                    self.signal.emit(str('refresh点击完成'))
-
-        if guaji_1 == 1 and self.win_exist == 1:
-            self.signal.emit('等待已结束战斗超时，已安全停止。')
-            guaji_1 = 2
-            return
-
-        result = 1
-        self.clean_fin= click_action.find_item_with_result(self, './aim/quests/link_raid/joined_battles/win', 'win/lose')
-        self.signal.emit(str(f'win/loss的状态是{self.clean_fin}，1是没有了，2是还存在'))
-
-        if (self.clean_fin==2):
-            # 点击win/lose
-            result = self._click_until('./aim/quests/link_raid/joined_battles/win', 'win/lose')
-            if result == 2:
-                self.signal.emit(str('win/lose点击完成'))
-            result = 1
-
-            # 点击右下角的ended
-            result = self._click_until('./aim/quests/link_raid/joined_battles/ended', 'ended')
-            if result == 2:
-                self.signal.emit(str('ended点击完成'))
-            result = 1
-
-            # 点击结算界面的tap_to_countinue
-            result = self._click_until(
-                './aim/quests/link_raid/backup_requests/battle/tap_to_countinue',
-                'tap_to_countinue',
-                BATTLE_TIMEOUT,
-            )
-            if result == 2:
-                self.signal.emit(str('tap_to_countinue点击完成'))
-            result = 1
-
-            # 点击结算界面界面的back，点完后回到前面
-            result = self._click_until('./aim/quests/link_raid/backup_requests/battle/back', 'back')
-            if result == 2:
-                self.signal.emit(str('back点击完成'))
-            result = 1
-
-            #返回后，点击左侧的joined battle，这个没有意义，主要是防止延迟导致出问题，如果joined battle能点击，说明加载好了
-            result = self._click_until('./aim/quests/link_raid/backup_requests/joined_battles', 'joined_battles')
-            if result == 2:
-                self.signal.emit(str('joined_battles点击完成，这一个点击主要为了防止延迟'))
-            result = 1
-
-            self.clean_fin = click_action.find_item_with_result(self, './aim/quests/link_raid/joined_battles/win', 'win/lose')
-            self.signal.emit(str(f'win/loss的状态是{self.clean_fin}，1是没有了，2是还存在'))
-
-        else:
-            self.join_full=1#用于跳出外部的while
-
-            #点击第二层的backup_requests，回到选战斗界面
-            result = self._click_until('./aim/quests/link_raid/backup_requests/backup_requests', 'backup_requests')
-            if result == 2:
-                self.signal.emit(str('第二层的backup_requests点击完成'))
-            result = 1
-
-            # 点击刷新
-            result = self._click_until('./aim/quests/link_raid/backup_requests/refresh', 'refresh')
-            if result == 2:
-                self.signal.emit(str('refresh点击完成'))
-            result = 1
-
-
-    #打架之前点击刷新
-    def prepare_battle(self):
-        result = 1
-
-        #点击刷新
-        result = self._click_until('./aim/quests/link_raid/backup_requests/refresh', 'refresh')
-        if result == 2:
-            self.signal.emit(str('refresh点击完成'))
-        result = 1
-
-
-
-    #寻找需要打架的等级，这个找不到也要继续，不能用while循环寻找
-    def find_lv(self):
-        # 往下拉3次用于寻找
-        find_time=4
-        # 这个判断对应等级是否存在，1是没找到，2是找到了默认设置没找到，进入第一次循环
-        self.level_choice_exist=1;
-
-
-        while(guaji_1 == 1 and find_time>1 and self.level_choice_exist==1):
-            self.level_choice_exist = click_action.find_item_with_result(self,
-                                                            f'./aim/quests/link_raid/backup_requests/lv/lv{self.level_choice}/lv{self.level_choice}',
-                                                            f'lv{self.level_choice}')
-            if (self.level_choice_exist == 2):
-                self.signal.emit(str(f'lv{self.level_choice}找到了，下一步是选择'))
-            else:
-                find_time=find_time-1
-                self.signal.emit(str(f'lv{self.level_choice}没有找到，往下拉动，还有的寻找次数为{find_time-2}'))
-                if not self._running():
-                    return
-                click_action.move_a_to_b_scaled(1400, 1200, 1400, 400)
-                if stop_event_1.wait(4):
-                    return
-                self.signal.emit(str(f'往下移动完成'))
-
-        if (self.level_choice_exist == 2):
-            if (guaji_1 == 1):  # 这里不可以用while，只能运行一遍
-                result = click_action.click_item_with_result(self,
-                                                    f'./aim/quests/link_raid/backup_requests/lv/lv{self.level_choice}/lv{self.level_choice}',
-                                                    f'lv{self.level_choice}')
-                if (result == 2):
-                    self.signal.emit(str(f'lv{self.level_choice}点击完成'))
-                else:
-                    self.signal.emit(str(f'lv{self.level_choice}没有找到，不会重复运行，理论上这一条不应该发生，即便发生了也会继续运行'))
-                result = 1
-
-
-
-
-        # 这个判断对应等级是否存在，1是没找到，2是找到了
-
-        if(self.level_choice_exist==1):
-            self.signal.emit(str(f'lv{self.level_choice}没有找到，直接点击第一个'))
-        else:
-            self.signal.emit(str(f'lv{self.level_choice}找到了，下一步是选择'))
-
-        result =1
-        #当需要点击的等级存在，点击相应等级，只过一遍，不循环，这里不会卡
-
-
-
-
-    #加入战斗，需要点击join和play两个，接下来就会又各种情况判定，因为体力会满，战斗会结束
-    def join_battle(self):
-        global guaji_1
-        result = 1
-
-        #点击join进入到选人的界面
-        result = self._click_until('./aim/quests/link_raid/backup_requests/join', 'join')
-        if result == 2:
-            self.signal.emit(str('join点击完成'))
-        result = 1
-
-        #判断体力是否耗尽，正常情况应该是1，耗尽会变成2
-        time.sleep(0.2)
-        self.LP_full = click_action.find_item_with_result(self, f'./aim/quests/link_raid/backup_requests/no_lp/no_lp', 'no_lp')
-        self.signal.emit(str(f'体力是否耗尽的状态是{self.LP_full}，1是体力还能继续打，2是不能打了，要开始判断是否喝药或者暂停'))
-
-        #如果体力耗尽，判断是否要结束或者喝药
-        if self.LP_full==2:
-            self.LP_full_add= self.LP_full_add-1
-            self.signal.emit(str(f'剩余喝体力药的次数是{self.LP_full_add}，0就是不喝药了，结束挂机'))
-            if self.LP_full_add==0:#剩余喝药次数耗尽
-                guaji_1 = 2
-            else:
-                result = self._click_until('./aim/quests/link_raid/backup_requests/no_lp/ok', 'ok')
-                if result == 2:
-                    self.signal.emit(str('ok点击完成，完成喝药'))
-                result = 1
-
-
-
-        #点击play理论上进入战斗，实际上不一定，可能体力回满一类的
-        result = self._click_until('./aim/quests/link_raid/backup_requests/join/play', 'play')
-        if result == 2:
-            self.signal.emit(str('play点击完成'))
-        result = 1
-
-
-    #判断当前战斗是否结束，结束了点一下刷新
-    def check_already_end(self):
-        #防止延迟问题
-        time.sleep(0.9)
-
-        # 确认战斗是否结束
-        self.already_end = click_action.find_item_with_result(self, f'./aim/quests/link_raid/backup_requests/join/full/already_end', 'already_end')
-        self.signal.emit(str(f'战斗是否已经结束的状态是{self.already_end}，1是没有结束，2是结束了'))
-
-        #如果战斗已经结束，点击ok，然后点击刷新
-        while(guaji_1 == 1 and self.already_end==2):
-            result=1
-            #点击ok
-            result = self._click_until('./aim/quests/link_raid/backup_requests/join/ok', 'ok')
-            if result == 2:
-                self.signal.emit(str('ok点击完成'))
-            result = 1
-
-            self.prepare_battle()
-            if not self._running():
-                return
-            self.find_lv()
-            if not self._running():
-                return
-            self.join_battle()
-            if not self._running():
-                return
-
-            #再次判断，只要脸够黑，就能连着结束
-            self.already_end = click_action.find_item_with_result(self, f'./aim/quests/link_raid/backup_requests/join/full/already_end', 'already_end')
-            self.signal.emit(str(f'战斗是否已经结束的状态是{self.already_end}，1是没有结束，2是结束了'))
-
-    #完成战斗，然后点back。点击战斗结束会出来的tap_to_countinue
-    def battle_and_finish(self):
-        global guaji_1
-        result = 1
-
-        #点击结算界面的tap_to_countinue
-        result = self._click_until(
-            './aim/quests/link_raid/backup_requests/battle/tap_to_countinue',
-            'tap_to_countinue',
-            BATTLE_TIMEOUT,
-        )
-        if result == 2:
-            self.signal.emit(str('tap_to_countinue点击完成'))
-        result = 1
-
-        #等待2秒，防止延迟，该死的服务器
-        time.sleep(2)
-
-        #等待back界面出现，然后开始点赞，这里通过找到最底下的back来判定是否可以点赞
-        wait_back = retry_until(
-            lambda: click_action.find_item_with_result(
-                self, './aim/quests/link_raid/backup_requests/battle/back', 'back'
-            ),
-            self._running,
-        )
-        if wait_back == 2:
-            self.signal.emit(str('back已经可以看到，可以开始点赞'))
-        elif guaji_1 == 1:
-            self.signal.emit('等待back超时，已安全停止。')
-            guaji_1 = 2
-
-        #点赞系统。最多点9下，点到不能点为止
-        love_time=9
-        while(guaji_1==1 and love_time >0):
-            result= click_action.click_item_with_result(self, './aim/quests/link_raid/backup_requests/battle/love', 'love')
-            if (result ==2):
-                self.signal.emit(str('love点击完成，点赞完成一次'))
-                love_time=love_time - 1
-            else:
-                self.signal.emit(str('love没有找到，可能是次数耗尽或者要下拉'))
-                if stop_event_1.wait(0.5):
-                    return
-                if not self._running():
-                    return
-                click_action.move_a_to_b_scaled(1400, 1000, 1400, 600)
-                result = click_action.click_item_with_result(self, './aim/quests/link_raid/backup_requests/battle/love',
-                                                             'love')
-                if result==1:
-                    love_time=0
-                    self.signal.emit(str('没有点赞了'))
-        result = 1
-
-        #点击结算界面界面的back，点完后回到boss打脸的界面
-        result = self._click_until('./aim/quests/link_raid/backup_requests/battle/back', 'back')
-        if result == 2:
-            self.signal.emit(str('back点击完成，一场战斗结束了'))
-        result = 1
-
-
-
-class WorkThread_2 (QThread):
-    signal = Signal(str)
-    def __init__(self):
-        super().__init__()
-        print('WorkThread_2准备就绪\n')
-
-    def _running(self):
-        return guaji_2 == 1 and not stop_event_2.is_set()
-
-    def _click_until(self, picture, name, timeout=RETRY_TIMEOUT):
-        global guaji_2
-        result = retry_until(
-            lambda: click_action.click_item_with_result(self, picture, name),
-            self._running,
-            timeout,
-        )
-        if result == 1 and self._running():
-            self.signal.emit(f'等待{name}超过{timeout}秒，已安全停止。请检查起始界面、模板语言和分辨率。')
-            guaji_2 = 2
-        return result
-    def run(self):
-        print('执行WorkThread_2,两秒钟后启动！\n')
-        self.signal.emit(str('启动刷晶花挂机'))
-
-        #运行标识符，1是正常运行，2是停止
-        global guaji_2
-        #喝药次数，1是不喝药，2是1次，需要减一
-        global crystalis_lp_recover_times
-        self.lp_recover = crystalis_lp_recover_times
-
-        #提示框
-        self.signal.emit(str('具体参数如下：'))
-        self.signal.emit(str(f'喝体力药的次数：{self.lp_recover - 1}'))
-        self.signal.emit(str('参数错误请暂停'))
-        self.signal.emit(str(f'需要在选择完成关卡和队伍的界面启动。也就是点一下play就进入战斗的界面'))
-
-        if stop_event_2.wait(2):
-            return
-        click_action.click_position_scaled(2000, 1000)
-        self.signal.emit(str('把游戏弄到前台，然后随便碰一下中间'))
-        if stop_event_2.wait(1):
-            return
-
-        self.click_play()
-        #执行部分
-        while(guaji_2==1):
-            self.wait_win()
-            if guaji_2 != 1:
-                break
-            self.click_retry_or_recover_lp()
-
-
-
-
-
-        #函数部分
-        #点击play开始挂
-
-    def click_play(self):
-        result = 1
-
-            # 在主界面点击quests
-        result = self._click_until('./aim/crystalis/play', 'play')
-        if result == 2:
-            self.signal.emit(str('play点击完成'))
-
-    def wait_win(self):
-        global guaji_2
-        check_win=1#这东西代表看到retry，1是没看到，2是看到
-        deadline = time.monotonic() + BATTLE_TIMEOUT
-        while(check_win==1 and guaji_2==1 and time.monotonic() < deadline):
-
-
-            #战斗结束后，右上角会出现result，点击整个右侧屏幕的任何地方几次就会让它出现retry
-            result = click_action.click_item_with_result(self, './aim/crystalis/result', 'result')
-            if (result == 2):
-                self.signal.emit(str('result点击完成，点了之后会出现retry'))
-            else:
-                self.signal.emit(str('result没有找到，还在战斗状态'))
-
-            if (result ==2):
-                check_win = click_action.find_item_with_result(self, f'./aim/crystalis/retry', 'retry')
-                self.signal.emit(str(f'result被点击过一次，尝试寻找retry，具体的状态是{check_win}，1是没有找到，2是找到了'))
-        if check_win == 1 and guaji_2 == 1:
-            self.signal.emit('等待晶花战斗结束超时，已安全停止。')
-            guaji_2 = 2
-
-
-    def click_retry_or_recover_lp(self):
-        global guaji_2
-        result=1
-        result = self._click_until('./aim/crystalis/retry', 'retry')
-        if result == 2:
-            self.signal.emit(str('retry点击完成'))
-
-        time.sleep(2) #等待确保延迟
-            #寻找是否存在体力耗尽
-        if(click_action.find_item_with_result(self, './aim/crystalis/ok', 'ok')==2):
-            self.lp_recover=self.lp_recover-1
-            self.signal.emit(str(f'体力用完了，剩余体力恢复次数还是{self.lp_recover}'))
-            if(self.lp_recover==0):
-                guaji_2=2
-
-            result = 1
-            result = self._click_until('./aim/crystalis/ok', 'ok')
-            if result == 2:
-                self.signal.emit(str('ok点击完成，体力完成恢复'))
-                time.sleep(5)#防止瞬间出现的retry干扰
-        else:
-            self.signal.emit(str(f'当前还有体力，下一把战斗正常开始，体力剩余恢复次数是{self.lp_recover-1}'))
-
-
-
-
-
-
 
 if __name__ == '__main__':
     #这些据说能让导出程序的时候不出奇怪的bug
@@ -1092,7 +514,7 @@ if __name__ == '__main__':
     print('运行路径：', folder_path)
 
     # 如果程序被打包为可执行文件
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, "frozen", False):
         # 获取可执行文件所在的目录
         BASE_PATH = os.path.dirname(sys.executable)
         print(f'脚本执行路径：{BASE_PATH}')
@@ -1110,5 +532,3 @@ if __name__ == '__main__':
     window = mywindow()
     window.show()
     app.exec()
-
-

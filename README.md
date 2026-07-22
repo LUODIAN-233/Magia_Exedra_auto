@@ -62,17 +62,17 @@
 ### 工作流程
 
 ```
-main.py（GUI + 工作线程）
+main.py（GUI 入口，仅负责启动/停止/传参）
    │
-   ├── WorkThread_1 ──► click_action ──► click_behavior ──► 游戏
-   │   (Link Raid)      (模板迭代+坐标)  (匹配+点击+窗口)
+   ├── workers/LinkRaidWorker ──► click_action ──► click_behavior ──► 游戏
+   │   (Link Raid)               (模板迭代+坐标)  (匹配+点击+窗口)
    │
-   ├── WorkThread_2 ──► click_action ──► click_behavior ──► 游戏
+   ├── workers/CrystalisWorker ──► click_action ──► click_behavior ──► 游戏
    │   (晶花)
    │
     └── LanguageSwitcherWidget
           ├── language_switcher（junction 管理）
-          └── image_scaler（2K → 其他分辨率）
+          └── image_scaler（2K -> 其他分辨率）
 ```
 
 ---
@@ -161,7 +161,11 @@ pyinstaller -D -i resource/main.ico main.py
 
 ```
 Magia_Exedra_auto/
-├── main.py                  # 入口：GUI + 两个工作线程 + 语言切换控件
+├── main.py                  # GUI 入口：仅构造/启动/停止工作线程并传参
+├── workers/                 # 挂机运行逻辑包（与 GUI 解耦）
+│   ├── base.py              # 工作线程基类（运行/停止状态、重试与超时停止）
+│   ├── link_raid.py         # Link Raid 挂机流程
+│   └── crystalis.py         # 晶花挂机流程
 ├── click_action.py          # 高级点击动作（模板迭代、坐标点击、拖拽）
 ├── click_behavior.py        # 低级操作（截图、匹配、点击、窗口聚焦）
 ├── language_switcher.py     # 语言/分辨率切换（junction 管理）
@@ -187,7 +191,7 @@ Magia_Exedra_auto/
 
 - **返回值约定**：`2` = 成功 / 找到 / 点击；`1` = 未找到 / 继续尝试。非布尔。
 - **模板编号**：`click_item_with_result` 按 `<name>_1.png`、`<name>_2.png`… 递增尝试直到文件不存在，新增变体只需放入下一个编号图片。
-- **停止标志**：`guaji_1` / `guaji_2` 保留原有状态值，并配合线程事件保证启动和停止顺序。
+- **运行/停止状态**：每个工作线程各自维护 `_active`（自身是否运行）与 `_stop_event`（GUI 停止事件），不再使用全局 `guaji` 标志；`stop()` 对未启动或已结束的线程调用也安全，同一个线程对象可反复启动。
 
 ---
 
