@@ -27,7 +27,7 @@ except ModuleNotFoundError:
     template_write_lock = None
     template_mutex_name = None
 
-VERSION = "2.2.0-beta"                 #当前版本（语义化，无前缀 v）；发布新版本时务必同步更新
+VERSION = "2.2.1-beta"                 #当前版本（语义化，无前缀 v）；发布新版本时务必同步更新
 REPO = "LUODIAN-233/Magia_Exedra_auto"
 RELEASES_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES_LIST_API = f"https://api.github.com/repos/{REPO}/releases"  #所有 release（含预发布），beta 通道用
