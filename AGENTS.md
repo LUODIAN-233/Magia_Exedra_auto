@@ -129,3 +129,11 @@ Two selectable mode flows have required starting screens. Their code is independ
 
 - Do not translate usernames, contributor names, game-mode proper nouns, library names, code identifiers, or exact GUI labels. EN/JP may add a translated gloss after the original GUI text.
 - Translate surrounding prose naturally. `README_EN.md` and `README_JP.md` must end with an AI-translation disclaimer pointing to Chinese `README.md`; Chinese README has no translation disclaimer.
+
+## Wiki
+
+- `wiki-draft/` is the local source of truth for the GitHub Wiki. Each `.md` filename (without extension) becomes a wiki page name; Chinese filenames are supported.
+- When `wiki-draft/` has changes, sync them to the GitHub Wiki repository at `https://github.com/LUODIAN-233/Magia_Exedra_auto.wiki.git` (a separate git repo on `master`). Clone it to a temp dir, copy all `wiki-draft/*.md` over, commit, and push. Do this whenever wiki drafts change, independent of code releases.
+- Wiki pages must mirror the corresponding `wiki-draft/*.md` exactly; do not edit wiki pages directly on GitHub.
+- Preserve any wiki-only control files (e.g. `_Sidebar.md`, `_Footer.md`, `_Header.md`) that are not in `wiki-draft/`; only add or overwrite the page files that exist under `wiki-draft/`.
+- The three-language cross-links inside wiki pages use relative links like `./首页`, `./Home_EN`, `./ホーム`; keep them consistent across edits.
