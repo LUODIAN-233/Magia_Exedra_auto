@@ -65,6 +65,4 @@ There is no formal test suite, lint, or CI configuration. After changes, run eve
 - AMD64 PE validation
 - Packaged-app smoke start
 
-Only claim live-game validation when it has actually been performed.
-
 > This page is an AI translation and may contain ambiguities or inaccuracies. For authoritative content, refer to the [简体中文 Wiki](./源码运行与构建).

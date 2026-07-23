@@ -9,7 +9,7 @@ Windows-only game-automation bot for **Magia Exedra** (game window title `Madoka
 - In frozen mode, `OPENCV_SKIP_PYTHON_LOADER=1` must be set before anything imports `cv2`.
 - **DPI-sensitive import order:** keep `src.workers` lazy. Startup must remain `QApplication(...) -> mywindow() -> get_worker_registry()`. Importing workers earlier imports PyAutoGUI and may prevent Qt from setting Windows DPI awareness. `main.py` calls `log_setup.configure_logging()` at module import, before `QApplication`; this is stdlib-only and safe, and must stay before any business module import so all loggers are captured.
 - Runtime dependencies are declared in `requirements.txt` (`pyautogui`, `PySide6`, `opencv-python`, `numpy`, `pywinctl`, `Pillow`); install with `pip install -r requirements.txt`. Building additionally requires `pyinstaller` (listed but commented out in `requirements.txt`). Scaling uses committed `tools/ImageMagick/magick.exe` or `magick` on PATH.
-- There is no formal test suite, lint/typecheck config, or CI. Still run every applicable non-game check: Python compile/import checks, worker registry and template validation, update ZIP/extraction checks, lock/updater checks, AMD64 PE validation, and packaged-app smoke start. Only claim live-game validation when actually performed.
+- There is no formal test suite, lint/typecheck config, or CI. Still run every applicable non-game check: Python compile/import checks, worker registry and template validation, update ZIP/extraction checks, lock/updater checks, AMD64 PE validation, and packaged-app smoke start.
 
 ## Architecture
 
@@ -111,10 +111,10 @@ Two selectable mode flows have required starting screens. Their code is independ
   ## 测试说明
 
   - 实际执行的检查及结果
-  - 未测试的真实游戏流程和其它残余限制
+  - （仅 beta）未完成全流程测试的范围与残余限制
   ```
 
-- Release notes must be specific to the confirmed baseline-to-release range.
+- Release notes must be specific to the confirmed baseline-to-release range. Only beta Releases include incomplete-full-flow-testing notes in the testing section; stable Releases do not carry such notes and list only the checks actually performed.
 - After publishing, report branch, full commit hash, tag, stable/prerelease state, Release URL, asset name/size/SHA-256, checks run, residual limitations, and untracked local build artifacts.
 
 ## README and translations

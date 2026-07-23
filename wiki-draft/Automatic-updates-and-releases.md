@@ -78,10 +78,10 @@ Every Release description uses these sections in order:
 ## 测试说明
 
 - Checks actually performed and results
-- Untested live-game flows and other residual limitations
+- (beta only) Scope and residual limitations of incomplete full-flow testing
 ```
 
-Release notes must be specific to the confirmed baseline-to-release range.
+Release notes must be specific to the confirmed baseline-to-release range. Only beta Releases include incomplete-full-flow-testing notes in the testing section; stable Releases do not carry such notes and list only the checks actually performed.
 
 ## Post-release report
 
