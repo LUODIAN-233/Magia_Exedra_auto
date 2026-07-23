@@ -7,11 +7,17 @@ import tempfile
 import shutil
 import uuid
 import time
+import logging
 import winreg
 
 # 必须在间接导入 cv2 前设置，打包环境下才会生效。
 if getattr(sys, "frozen", False):
     os.environ["OPENCV_SKIP_PYTHON_LOADER"] = "1"
+
+#日志要在业务模块导入前配置好，后续所有 logger 才能被统一 handler 接管。
+#MAGIA_LOG_LEVEL 环境变量可覆盖控制台级别（默认 WARNING，开发时设 DEBUG 看全部）。
+from src.log_setup import configure_logging
+configure_logging()
 
 from datetime import datetime
 
@@ -24,6 +30,8 @@ from PySide6.QtGui import QIcon, QIntValidator
 
 #其他自己写的文件
 from src.packs import language_switcher, image_scaler
+
+logger = logging.getLogger(__name__)
 
 
 def get_worker_registry():
@@ -312,7 +320,7 @@ class mywindow(QWidget):
         worker = meta.worker_class()
         worker.signal.connect(self._append_log)
         display_name = meta.name.replace('_', ' ')
-        worker.finished.connect(lambda n=display_name: print(f'{n}挂机结束'))
+        worker.finished.connect(lambda n=display_name: logger.info('%s挂机结束', n))
         worker.finished.connect(lambda n=display_name: self._append_log(f'{n}挂机结束或被主动停止\n'))
         worker.finished.connect(self._automation_finished)
 
@@ -841,19 +849,19 @@ if __name__ == '__main__':
             return os.path.dirname(os.path.abspath(__file__))  # 获取脚本路径
 
     folder_path = get_executable_directory()
-    print('运行路径：', folder_path)
+    logger.info('运行路径：%s', folder_path)
 
     # 如果程序被打包为可执行文件
     if getattr(sys, "frozen", False):
         # 获取可执行文件所在的目录
         BASE_PATH = os.path.dirname(sys.executable)
-        print(f'脚本执行路径：{BASE_PATH}')
+        logger.info('脚本执行路径：%s', BASE_PATH)
         # 将当前工作目录设置为可执行文件所在的目录
         os.chdir(BASE_PATH)
     else:
         # 如果程序作为脚本运行，使用脚本目录
         BASE_PATH = os.path.dirname(__file__)
-        print(f'脚本执行路径：{BASE_PATH}')
+        logger.info('脚本执行路径：%s', BASE_PATH)
         os.chdir(BASE_PATH)
 
 

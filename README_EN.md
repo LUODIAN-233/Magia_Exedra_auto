@@ -34,6 +34,17 @@ Download the complete ZIP from [GitHub Releases](https://github.com/LUODIAN-233/
 
 > **Do not copy only the EXE.** The distribution also needs `_internal/`, `resource/`, `language/`, and `tools/` beside it.
 
+## Running from source
+
+Install dependencies first, then launch the entry point:
+
+```bash
+pip install -r requirements.txt
+python main.py
+```
+
+See [Wiki · Run from source and build](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/源码运行与构建) for full build instructions.
+
 ## Quick Start
 
 ### Link Raid
@@ -68,6 +79,7 @@ Download the complete ZIP from [GitHub Releases](https://github.com/LUODIAN-233/
 - Coordinate scaling supports `720p` / `1080p` / `2K` / `4K`, but recognition still depends on DPI, window size, and template quality
 - The JP server can switch to EN in-game and reuse the English templates
 - Not every mode/language/resolution combination has been fully tested in the live game; monitor a short run first
+- Runtime logs are written to a rotating file under the `logs/` folder beside the program for troubleshooting; set `MAGIA_LOG_LEVEL=DEBUG` to surface all log output on the console
 
 ## Wiki
 

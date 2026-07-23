@@ -17,11 +17,14 @@ import subprocess
 import tempfile
 import struct
 import zlib
+import logging
 
 try:
     from src.packs.file_lock import template_write_lock
 except ModuleNotFoundError:  #支持直接运行本文件排查
     from file_lock import template_write_lock
+
+logger = logging.getLogger(__name__)
 
 
 def base_dir():
@@ -107,7 +110,7 @@ def _remove_link(path):
         os.rmdir(path)  #对联接只会删掉链接，不会删目标内容
         return True
     except OSError as e:
-        print(f"删除联接失败: {e}")
+        logger.warning("删除联接失败: %s", e)
         return False
 
 
@@ -304,7 +307,7 @@ def _write_config(lang, res):
         os.replace(temp_path, CONFIG_PATH)
         return True
     except Exception as e:
-        print(f"写配置失败: {e}")
+        logger.warning("写配置失败: %s", e)
         return False
     finally:
         if temp_path and os.path.exists(temp_path):

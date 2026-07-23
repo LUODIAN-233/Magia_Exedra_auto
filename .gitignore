@@ -9,3 +9,6 @@ aim/
 #运行时记录当前语言/分辨率选择，每次切换都会改写，不入库
 language/active.json
 
+#运行时滚动日志，由 src/log_setup.py 写入，不入库
+logs/
+

@@ -7,8 +7,8 @@ Windows-only game-automation bot for **Magia Exedra** (game window title `Madoka
 - Run: `python main.py`. The entry point changes cwd to the script/exe directory so relative runtime paths resolve. Startup calls `language_switcher.ensure_active()`, which restores or creates the `aim/` junction.
 - Build: `pyinstaller -D -i resource/main.ico main.py`. This creates only the PyInstaller onedir output; a distributable package must also place `resource/`, `language/`, and `tools/` beside `main.exe`.
 - In frozen mode, `OPENCV_SKIP_PYTHON_LOADER=1` must be set before anything imports `cv2`.
-- **DPI-sensitive import order:** keep `src.workers` lazy. Startup must remain `QApplication(...) -> mywindow() -> get_worker_registry()`. Importing workers earlier imports PyAutoGUI and may prevent Qt from setting Windows DPI awareness.
-- There is no `requirements.txt`. Source runtime dependencies are `pyautogui`, `PySide6`, `opencv-python`, `numpy`, `pywinctl`, and `Pillow`. Building additionally requires `pyinstaller`. Scaling uses committed `tools/ImageMagick/magick.exe` or `magick` on PATH.
+- **DPI-sensitive import order:** keep `src.workers` lazy. Startup must remain `QApplication(...) -> mywindow() -> get_worker_registry()`. Importing workers earlier imports PyAutoGUI and may prevent Qt from setting Windows DPI awareness. `main.py` calls `log_setup.configure_logging()` at module import, before `QApplication`; this is stdlib-only and safe, and must stay before any business module import so all loggers are captured.
+- Runtime dependencies are declared in `requirements.txt` (`pyautogui`, `PySide6`, `opencv-python`, `numpy`, `pywinctl`, `Pillow`); install with `pip install -r requirements.txt`. Building additionally requires `pyinstaller` (listed but commented out in `requirements.txt`). Scaling uses committed `tools/ImageMagick/magick.exe` or `magick` on PATH.
 - There is no formal test suite, lint/typecheck config, or CI. Still run every applicable non-game check: Python compile/import checks, worker registry and template validation, update ZIP/extraction checks, lock/updater checks, AMD64 PE validation, and packaged-app smoke start. Only claim live-game validation when actually performed.
 
 ## Architecture
@@ -26,6 +26,7 @@ Mode-specific automation lives in `src/workers/`. `main.py` is the GUI entry and
 - `src/packs/image_scaler.py` - derives 720p/1080p/4K packs from each 2560x1440 source. Skip requires matching source SHA-256, recipe/tool fingerprint, and target SHA-256. Cleanup removes only files managed by a valid old manifest.
 - `src/packs/file_lock.py` - repository-specific `Global\\` Windows mutex shared by switching, scaling, worker runtime leases, update-lock recovery, and the installer.
 - `src/update_check.py` - prerelease-aware update checking and frozen-app updating. Reading remains compatible with one unique `MagiaExedra_auto_<tag>.zip` or `MagiaExedra_auto_<tag>_win64.zip`; new releases must use `_win64`. Automatic install requires GitHub SHA-256, cancellable size/hash-checked download, safe bounded extraction, AMD64 PE validation, backups, hash verification, rollback/recovery markers, and startup-health handshake.
+- `src/log_setup.py` - stdlib-only logging configuration called once at `main.py` import, before `QApplication`. Console handler defaults to WARNING (so image-recognition retries do not spam); a rotating DEBUG file handler writes to `logs/`. `MAGIA_LOG_LEVEL` overrides the console level. Worker `signal.emit` calls remain the user-facing GUI log channel and are not replaced by `logging`; runtime `print()` calls have been migrated to `logging.getLogger(__name__)`.
 
 Flow:
 
@@ -71,7 +72,7 @@ Two selectable mode flows have required starting screens. Their code is independ
 
 ## Git and local artifacts
 
-- `.gitignore` ignores `aim/`, `language/active.json`, `__pycache__/`, and `*.pyc`.
+- `.gitignore` ignores `aim/`, `language/active.json`, `__pycache__/`, `*.pyc`, and `logs/`.
 - Derived PNGs, `.source_hashes.json`, `build/`, `dist/`, and generated `main.spec` may appear untracked. Never stage them accidentally.
 - `tools/ImageMagick/` is committed and required by release packages.
 - The repository has `main`, `beta`, and potentially other target branches. Never infer target branch or release channel from the current branch alone. Direct push versus PR depends on the user's request and permissions.

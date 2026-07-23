@@ -9,10 +9,13 @@
 #  stop_event_2.wait(n)    -> self._wait(n)
 
 import time
+import logging
 
 from src.click import click_action
 from .base import BaseWorker, BATTLE_TIMEOUT
 from .registry import register, ParamSpec
+
+logger = logging.getLogger(__name__)
 
 
 @register(
@@ -34,7 +37,7 @@ from .registry import register, ParamSpec
 class CrystalisWorker(BaseWorker):
     def __init__(self, lp_recover_times=9):
         super().__init__()
-        print('CrystalisWorker准备就绪\n')
+        logger.debug('CrystalisWorker准备就绪')
         #喝体力药次数，存储的是“显示次数+1”，1 表示不喝药；GUI 启动前会重新赋值
         self.lp_recover_times = lp_recover_times
 
@@ -46,7 +49,7 @@ class CrystalisWorker(BaseWorker):
                 or not 1 <= self.lp_recover_times <= 9:
             self.signal.emit('喝体力药次数参数无效，本次挂机已停止。')
             return
-        print('执行CrystalisWorker,两秒钟后启动！\n')
+        logger.info('执行CrystalisWorker,两秒钟后启动！')
         self.signal.emit(str('启动刷晶花挂机'))
 
         # 喝药次数副本（运行时递减），1 是不喝药，2 是 1 次，需要减一

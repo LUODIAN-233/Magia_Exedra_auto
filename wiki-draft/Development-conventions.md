@@ -26,6 +26,13 @@ Language: [简体中文](./首页) · [English](./Home_EN) · [日本語](./ホ�
 - LP recovery values are drinks + 1. The GUI displays 0-10 for Link Raid and 0-8 for Crystalis, but passes `shown + 1`
 - Internal `1` means zero drinks and stop on first depletion
 
+## Logging
+
+- Use `logging.getLogger(__name__)` for runtime debug output, not `print()`
+- The console defaults to WARNING and the file to DEBUG under `logs/`; the `MAGIA_LOG_LEVEL` environment variable overrides the console level
+- Worker user-facing status messages still go through `signal.emit` (the GUI log box); do not replace them with `logging`
+- `if __name__ == "__main__"` diagnostic blocks may keep `print`; that is CLI direct output, not runtime noise
+
 ## GUI parameters
 
 - GUI parameters are registry-driven; there are no module-level parameter globals
@@ -58,7 +65,7 @@ The game window title is hardcoded as `MadokaExedra`. Changing it requires updat
 
 ## Git and local artifacts
 
-- `.gitignore` ignores `aim/`, `language/active.json`, `__pycache__/`, and `*.pyc`
+- `.gitignore` ignores `aim/`, `language/active.json`, `__pycache__/`, `*.pyc`, and `logs/`
 - Derived PNGs, `.source_hashes.json`, `build/`, `dist/`, and generated `main.spec` may appear untracked; never stage them accidentally
 - `tools/ImageMagick/` is committed and required by release packages
 - The repository has `main`, `beta`, and potentially other branches. Never infer target branch or release channel from the current branch alone

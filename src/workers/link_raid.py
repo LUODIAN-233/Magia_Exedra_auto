@@ -9,10 +9,13 @@
 #  stop_event_1.wait(n)    -> self._wait(n)
 
 import time
+import logging
 
 from src.click import click_action
 from .base import BaseWorker, BATTLE_TIMEOUT, retry_until
 from .registry import register, ParamSpec
+
+logger = logging.getLogger(__name__)
 
 
 @register(
@@ -65,7 +68,7 @@ from .registry import register, ParamSpec
 class LinkRaidWorker(BaseWorker):
     def __init__(self, level=6, lp_recover_times=1):
         super().__init__()
-        print('LinkRaidWorker准备就绪\n')
+        logger.debug('LinkRaidWorker准备就绪')
         #等级选择（lv6~lv12），GUI 启动前会重新赋值
         self.level_choice = level
         #喝体力药次数，存储的是“显示次数+1”，1 表示不喝药；GUI 启动前会重新赋值
@@ -82,7 +85,7 @@ class LinkRaidWorker(BaseWorker):
                 or not 1 <= self.lp_recover_times <= 11:
             self.signal.emit('喝体力药次数参数无效，本次挂机已停止。')
             return
-        print('执行LinkRaidWorker,两秒钟后启动！\n')
+        logger.info('执行LinkRaidWorker,两秒钟后启动！')
         self.signal.emit(str('启动link raid挂机'))
 
         # 体力是否够打下一把，1 是可以，2 是不行

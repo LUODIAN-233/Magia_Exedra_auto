@@ -9,13 +9,13 @@ Language: [简体中文](./首页) · [English](./Home_EN) · [日本語](./ホ�
 
 ## Installing dependencies
 
-This project has no `requirements.txt`. Install the runtime dependencies manually:
+Runtime dependencies are declared in `requirements.txt`:
 
 ```bash
-pip install pyautogui PySide6 opencv-python numpy pywinctl Pillow
+pip install -r requirements.txt
 ```
 
-Building a release additionally requires:
+Building a release additionally requires `pyinstaller` (listed but commented out in `requirements.txt`; uncomment it or install separately):
 
 ```bash
 pip install pyinstaller
@@ -30,6 +30,8 @@ python main.py
 ```
 
 `main.py` is the entry point. On startup it changes the working directory to the script directory so relative runtime paths (`./aim/...`, `./resource/...`) resolve correctly. Startup calls `language_switcher.ensure_active()`, which restores or creates the `aim/` directory junction.
+
+Startup also calls `log_setup.configure_logging()` to configure logging: the console defaults to WARNING and above (so image-recognition retries do not spam), while DEBUG-level entries are written to a rotating file under `logs/` for post-mortem analysis. Set `MAGIA_LOG_LEVEL=DEBUG` to surface all log output on the console.
 
 ## Packaging
 
@@ -50,7 +52,7 @@ This produces only the PyInstaller onedir output (`dist/main/` containing `main.
 ## Packaging notes
 
 - In frozen mode, `OPENCV_SKIP_PYTHON_LOADER=1` must be set before anything imports `cv2`. `main.py` handles this at the entry point; do not reorder imports.
-- **DPI-sensitive import order**: keep `src.workers` lazy. Startup must remain `QApplication(...) -> mywindow() -> get_worker_registry()`. Importing workers earlier imports PyAutoGUI and may prevent Qt from setting Windows DPI awareness.
+- **DPI-sensitive import order**: keep `src.workers` lazy. Startup must remain `QApplication(...) -> mywindow() -> get_worker_registry()`. Importing workers earlier imports PyAutoGUI and may prevent Qt from setting Windows DPI awareness. `main.py` calls `log_setup.configure_logging()` at module import, before `QApplication`; the module is stdlib-only and safe, and must run before any business module import so all loggers are captured.
 
 ## Verification checks
 

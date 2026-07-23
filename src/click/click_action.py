@@ -1,10 +1,13 @@
 import time
+import logging
 from pathlib import Path
 
 import pyautogui
 
 from . import click_behavior
 from src.packs import language_switcher, image_scaler
+
+logger = logging.getLogger(__name__)
 
 
 def _wait(self, seconds):
@@ -30,26 +33,26 @@ def click_item_with_result(self, picture, name):
         click_time = click_time + 1
 
         file_exist=Path(click_file)
-        print(f'文件状态是{file_exist}\n')
+        logger.debug('文件状态是%s', file_exist)
 
         if file_exist.exists():
             can_click = getattr(self, '_running', None)
             if can_click is not None and not can_click():
                 return 1
             check = click_behavior.routine(click_file, name, can_click)
-            print(f'点击{click_file}，点击返回值是{check}，成功点击是2，不点击是1')
+            logger.debug('点击%s，点击返回值是%s，成功点击是2，不点击是1', click_file, check)
             if _wait(self, 0.4):
                 return 1
         else:
-            print('文件耗尽\n')
+            logger.debug('文件耗尽')
 
     if (check == 1):
         click_time = click_time - 1
-        print(f'尝试了{click_time-1}次数，没有找到{name}，当前点击事件执行结束\n')
+        logger.debug('尝试了%s次数，没有找到%s，当前点击事件执行结束', click_time-1, name)
         return check
 
     if (check == 2):
-        print(f'点击{name}事件完成，当前点击事件执行结束\n')
+        logger.debug('点击%s事件完成，当前点击事件执行结束', name)
         if _wait(self, 0.5):
             return 1
         return check
@@ -70,24 +73,24 @@ def find_item_with_result(self, picture, name):
         click_time = click_time + 1
 
         file_exist = Path(click_file)
-        print(f'文件状态是{file_exist}\n')
+        logger.debug('文件状态是%s', file_exist)
         if file_exist.exists():
             can_find = getattr(self, '_running', None)
             if can_find is not None and not can_find():
                 return 1
             check = click_behavior.routine_only_find(click_file, name, can_find)
-            print(f'寻找{click_file}，寻找返回值是{check}，成功寻找是2，没找到是1')
+            logger.debug('寻找%s，寻找返回值是%s，成功寻找是2，没找到是1', click_file, check)
             if _wait(self, 0.4):
                 return 1
         else:
-            print('文件耗尽\n')
+            logger.debug('文件耗尽')
 
     if (check == 1):
         click_time = click_time - 1
-        print(f'尝试了{click_time-1}次数，没有找到{name}，当前寻找事件执行结束\n')
+        logger.debug('尝试了%s次数，没有找到%s，当前寻找事件执行结束', click_time-1, name)
         return check
     if (check == 2):
-        print(f'寻找{name}事件完成，找到了，当前寻找事件执行结束\n')
+        logger.debug('寻找%s事件完成，找到了，当前寻找事件执行结束', name)
         if _wait(self, 0.5):
             return 1
         return check
@@ -100,7 +103,7 @@ def click_position(move_lelt, move_top, can_click=None):
         return 1
     left, top, width, height = window
     if not (0 <= move_lelt < width and 0 <= move_top < height):
-        print(f'点击坐标超出游戏窗口: ({move_lelt}, {move_top})，窗口大小 {width}x{height}')
+        logger.warning('点击坐标超出游戏窗口: (%s, %s)，窗口大小 %sx%s', move_lelt, move_top, width, height)
         return 1
     try:
         time.sleep(0.1)
@@ -113,7 +116,7 @@ def click_position(move_lelt, move_top, can_click=None):
         pyautogui.click(left + move_lelt, top + move_top, button='left')
         time.sleep(0.1)
     except Exception as e:
-        print(f'坐标点击失败: {e}')
+        logger.warning('坐标点击失败: %s', e)
         return 1
     return 2
 
@@ -124,7 +127,7 @@ def move_a_to_b(move_lelt_a, move_top_a, move_lelt_b, move_top_b, can_move=None)
     left, top, width, height = window
     points = ((move_lelt_a, move_top_a), (move_lelt_b, move_top_b))
     if any(not (0 <= x < width and 0 <= y < height) for x, y in points):
-        print(f'拖拽坐标超出游戏窗口: {points}，窗口大小 {width}x{height}')
+        logger.warning('拖拽坐标超出游戏窗口: %s，窗口大小 %sx%s', points, width, height)
         return 1
     try:
         time.sleep(0.1)
@@ -137,7 +140,7 @@ def move_a_to_b(move_lelt_a, move_top_a, move_lelt_b, move_top_b, can_move=None)
         pyautogui.dragTo(left + move_lelt_b, top + move_top_b, duration=2, button='left')
         time.sleep(0.1)
     except Exception as e:
-        print(f'坐标拖拽失败: {e}')
+        logger.warning('坐标拖拽失败: %s', e)
         return 1
     return 2
 
@@ -160,7 +163,7 @@ def click_position_scaled(x_2k, y_2k, can_click=None):
     #把 2K 基准坐标按当前分辨率缩放后点击
     f = _res_scale_factor()
     if f is None:
-        print('无法确认模板 pack 的坐标缩放倍率，拒绝位置点击')
+        logger.warning('无法确认模板 pack 的坐标缩放倍率，拒绝位置点击')
         return 1
     return click_position(round(x_2k * f), round(y_2k * f), can_click)
 
@@ -169,7 +172,7 @@ def move_a_to_b_scaled(ax_2k, ay_2k, bx_2k, by_2k, can_move=None):
     #把 2K 基准起止坐标按当前分辨率缩放后拖拽
     f = _res_scale_factor()
     if f is None:
-        print('无法确认模板 pack 的坐标缩放倍率，拒绝拖拽')
+        logger.warning('无法确认模板 pack 的坐标缩放倍率，拒绝拖拽')
         return 1
     return move_a_to_b(
         round(ax_2k * f), round(ay_2k * f),

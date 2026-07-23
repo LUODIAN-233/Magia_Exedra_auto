@@ -1,0 +1,15 @@
+# Magia Exedra 自动挂机 - Python 依赖
+# 仅支持 Windows x86-64，需 Python 3.x
+# 安装：pip install -r requirements.txt
+
+#-----------运行时依赖-----------
+pyautogui          # 鼠标移动/点击/截图
+PySide6            # GUI 框架（QApplication/QWidget/QThread）
+opencv-python      # 模板匹配 cv2.matchTemplate (TM_SQDIFF_NORMED)
+numpy              # OpenCV 图像数组处理
+pywinctl           # 游戏窗口查找/聚焦/客户区读取
+Pillow             # PNG 模板完整性校验（也是 PyAutoGUI 的运行依赖）
+
+#-----------构建依赖-----------
+#仅打包发布时需要，源码运行不需要；如需打包请取消下面这行注释
+#pyinstaller       # pyinstaller -D -i resource/main.ico main.py

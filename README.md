@@ -34,6 +34,17 @@
 
 > **不要只复制单个 EXE。** 发行包还需要同级的 `_internal/`、`resource/`、`language/` 和 `tools/`。
 
+## 源码运行
+
+从源码运行需先安装依赖，再执行入口：
+
+```bash
+pip install -r requirements.txt
+python main.py
+```
+
+详细的运行与构建说明见 [Wiki · 源码运行与构建](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/源码运行与构建)。
+
 ## 快速开始
 
 ### Link Raid
@@ -68,6 +79,7 @@
 - 坐标换算支持 `720p` / `1080p` / `2K` / `4K`，但实际识图效果仍受 DPI、窗口尺寸和模板质量影响
 - JP 服务器可在游戏内切换到 EN，从而复用英语模板
 - 当前版本尚未完成真实游戏下的全部模式、语言和分辨率组合测试，建议先短时间观察
+- 运行时日志会滚动写入程序根目录的 `logs/` 文件夹，出现异常时可用于排查；设置环境变量 `MAGIA_LOG_LEVEL=DEBUG` 可让控制台输出全部日志
 
 ## Wiki
 

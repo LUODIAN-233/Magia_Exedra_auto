@@ -20,6 +20,7 @@ src/
     image_scaler.py          Derive other-resolution templates from 2K source
     file_lock.py             Cross-process template mutex
   update_check.py            Version checking and safe update installation
+  log_setup.py               Logging configuration (console + rotating file), called at main.py import
 resource/                    Icons and other resources
 language/                    Template pack source directories
 tools/ImageMagick/           Asset scaling tool
@@ -97,5 +98,9 @@ Repository-specific `Global\\` Windows mutex shared by switching, scaling, worke
 ## src/update_check.py
 
 Prerelease-aware update checking and frozen-app updating. Reading remains compatible with one unique `MagiaExedra_auto_<tag>.zip` or `MagiaExedra_auto_<tag>_win64.zip`; new releases must use `_win64`. Automatic install requires GitHub SHA-256, cancellable size/hash-checked download, safe bounded extraction, AMD64 PE validation, backups, hash verification, rollback/recovery markers, and startup-health handshake.
+
+## src/log_setup.py
+
+Stdlib-only logging configuration called once at `main.py` import, before `QApplication`. The console handler defaults to WARNING (so image-recognition retries do not spam), while a rotating DEBUG file handler writes to `logs/`. The `MAGIA_LOG_LEVEL` environment variable overrides the console level. Worker `signal.emit` calls remain the user-facing GUI log channel and are not replaced by `logging`; runtime `print()` calls have been migrated to `logging.getLogger(__name__)`.
 
 > This page is an AI translation and may contain ambiguities or inaccuracies. For authoritative content, refer to the [简体中文 Wiki](./项目架构).
