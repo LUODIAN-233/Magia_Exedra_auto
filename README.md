@@ -30,7 +30,7 @@
 
 ## 下载
 
-从 [GitHub Releases](https://github.com/LUODIAN-233/Magia_Exedra_auto/releases) 下载完整 ZIP，解压后运行根目录的 `main.exe`。
+从 [GitHub Releases](https://github.com/LUODIAN-233/Magia_Exedra_auto/releases) 下载完整 ZIP，解压后运行根目录的 `Magia_Exedra_auto.exe`。
 
 > **不要只复制单个 EXE。** 发行包还需要同级的 `_internal/`、`resource/`、`language/` 和 `tools/`。
 

@@ -38,16 +38,16 @@ Startup also calls `log_setup.configure_logging()` to configure logging: the con
 Use PyInstaller onedir mode:
 
 ```bash
-pyinstaller -D -i resource/main.ico main.py
+pyinstaller -D -i resource/main.ico -n Magia_Exedra_auto main.py
 ```
 
-This produces only the PyInstaller onedir output (`dist/main/` containing `main.exe` and `_internal/`). A distributable package must also place version-controlled runtime files beside `main.exe`:
+`-n Magia_Exedra_auto` names the built entry executable after the project (`Magia_Exedra_auto.exe` instead of the default `main.exe`); this is the entry executable used in releases. This produces only the PyInstaller onedir output (`dist/Magia_Exedra_auto/` containing `Magia_Exedra_auto.exe` and `_internal/`). A distributable package must also place version-controlled runtime files beside `Magia_Exedra_auto.exe`:
 
 - `resource/` (icons and other resources)
 - `language/` (template packs, including `.gitkeep` placeholders)
 - `tools/` (ImageMagick executables)
 
-`main.exe` must be at the ZIP root. Do not include `aim/`, `active.json`, `.source_hashes.json`, locally generated derived templates, caches, or Git/build metadata in the release package.
+`Magia_Exedra_auto.exe` must be at the ZIP root. Do not include `aim/`, `active.json`, `.source_hashes.json`, locally generated derived templates, caches, or Git/build metadata in the release package.
 
 ## Packaging notes
 

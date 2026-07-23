@@ -5,7 +5,7 @@ Windows-only game-automation bot for **Magia Exedra** (game window title `Madoka
 ## Running / building
 
 - Run: `python main.py`. The entry point changes cwd to the script/exe directory so relative runtime paths resolve. Startup calls `language_switcher.ensure_active()`, which restores or creates the `aim/` junction.
-- Build: `pyinstaller -D -i resource/main.ico main.py`. This creates only the PyInstaller onedir output; a distributable package must also place `resource/`, `language/`, and `tools/` beside `main.exe`.
+- Build: `pyinstaller -D -i resource/main.ico -n Magia_Exedra_auto main.py`. The built `main.exe` is renamed to the project name `Magia_Exedra_auto.exe` (via `-n`); this is the entry executable shipped in releases. This creates only the PyInstaller onedir output; a distributable package must also place `resource/`, `language/`, and `tools/` beside `Magia_Exedra_auto.exe`.
 - In frozen mode, `OPENCV_SKIP_PYTHON_LOADER=1` must be set before anything imports `cv2`.
 - **DPI-sensitive import order:** keep `src.workers` lazy. Startup must remain `QApplication(...) -> mywindow() -> get_worker_registry()`. Importing workers earlier imports PyAutoGUI and may prevent Qt from setting Windows DPI awareness. `main.py` calls `log_setup.configure_logging()` at module import, before `QApplication`; this is stdlib-only and safe, and must stay before any business module import so all loggers are captured.
 - Runtime dependencies are declared in `requirements.txt` (`pyautogui`, `PySide6`, `opencv-python`, `numpy`, `pywinctl`, `Pillow`); install with `pip install -r requirements.txt`. Building additionally requires `pyinstaller` (listed but commented out in `requirements.txt`). Scaling uses committed `tools/ImageMagick/magick.exe` or `magick` on PATH.
@@ -87,12 +87,12 @@ Two selectable mode flows have required starting screens. Their code is independ
 - Choose and record an ancestor release baseline. Stable normally uses the previous stable ancestor; beta uses the previous beta ancestor, or nearest stable ancestor if no prior beta exists. Review every commit and the full diff from baseline to release commit.
 - Update `src/update_check.py::VERSION` and version-specific docs, then run all applicable non-game checks.
 - Build into fresh output/staging with `pyinstaller -D -i resource/main.ico main.py`; do not reuse old untracked `main.spec` or `dist/` accidentally.
-- Assemble by allowlist: new `main.exe` and `_internal/`, plus version-controlled runtime files under `resource/`, `language/`, and `tools/`. `main.exe` must be at ZIP root. Exclude `aim/`, `active.json`, `.source_hashes.json`, locally generated derived PNGs, caches, Git/build metadata, and unrelated untracked files.
+- Assemble by allowlist: new `Magia_Exedra_auto.exe` and `_internal/`, plus version-controlled runtime files under `resource/`, `language/`, and `tools/`. `Magia_Exedra_auto.exe` must be at ZIP root. Exclude `aim/`, `active.json`, `.source_hashes.json`, locally generated derived PNGs, caches, Git/build metadata, and unrelated untracked files.
 - New asset names are strict:
   - Stable: `MagiaExedra_auto_v<version>_win64.zip`
   - Beta: `MagiaExedra_auto_v<version-with-prerelease>_win64.zip`
 - Verify ZIP CRC/entries, tracked pack placeholders, no runtime/generated files, and AMD64 PE. Run current `extract_update()` against the final ZIP and confirm its root/manifest. Confirm `find_asset()` uniquely identifies expected metadata.
-- Smoke-start `main.exe` from a disposable copy of the final staging tree. Confirm it does not immediately exit and can create the Qt app/load workers. Remove smoke-created `aim/` and `active.json` before final ZIP. If smoke start cannot run, state why in Release notes.
+- Smoke-start `Magia_Exedra_auto.exe` from a disposable copy of the final staging tree. Confirm it does not immediately exit and can create the Qt app/load workers. Remove smoke-created `aim/` and `active.json` before final ZIP. If smoke start cannot run, state why in Release notes.
 - Push the intended branch first. Create a **draft Release**, upload the one final ZIP, wait for `state=uploaded` and GitHub digest, then compare asset name, byte size, and SHA-256 with local values. Prefer re-downloading and rechecking before publication.
 - Publish only after all checks pass. The tag/Release must point to the exact pushed commit. Beta must be prerelease and never latest. On failure keep it draft or remove the bad asset/Release; never silently replace content under a published tag.
 - Every Release description uses these sections in order:
@@ -114,7 +114,7 @@ Two selectable mode flows have required starting screens. Their code is independ
   - （仅 beta）未完成全流程测试的范围与残余限制
   ```
 
-- Release notes must be specific to the confirmed baseline-to-release range. Only beta Releases include incomplete-full-flow-testing notes in the testing section; stable Releases do not carry such notes and list only the checks actually performed.
+- Release notes must be specific to the confirmed baseline-to-release range and kept concise (match the v2.2.0-beta style: short bullet per change; build info as one line of environment plus SHA-256; testing section as one paragraph). Only beta Releases include incomplete-full-flow-testing notes in the testing section; stable Releases do not carry such notes and list only the checks actually performed.
 - After publishing, report branch, full commit hash, tag, stable/prerelease state, Release URL, asset name/size/SHA-256, checks run, residual limitations, and untracked local build artifacts.
 
 ## README and translations

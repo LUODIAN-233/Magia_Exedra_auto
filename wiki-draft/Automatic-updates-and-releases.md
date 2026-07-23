@@ -54,9 +54,9 @@ Asset names are strict:
 3. Review every commit and the full diff from baseline to release commit
 4. Update `src/update_check.py::VERSION` and version-specific docs, then run all applicable non-game checks
 5. Build into a fresh output/staging directory with `pyinstaller -D -i resource/main.ico main.py`; do not reuse old untracked `main.spec` or `dist/`
-6. Assemble by allowlist: new `main.exe` and `_internal/`, plus version-controlled runtime files under `resource/`, `language/`, and `tools/`. `main.exe` must be at the ZIP root. Exclude `aim/`, `active.json`, `.source_hashes.json`, locally generated derived PNGs, caches, Git/build metadata, and unrelated untracked files
+6. Assemble by allowlist: new `Magia_Exedra_auto.exe` and `_internal/`, plus version-controlled runtime files under `resource/`, `language/`, and `tools/`. `Magia_Exedra_auto.exe` must be at the ZIP root. Exclude `aim/`, `active.json`, `.source_hashes.json`, locally generated derived PNGs, caches, Git/build metadata, and unrelated untracked files
 7. Verify ZIP CRC/entries, tracked pack placeholders, no runtime/generated files, and AMD64 PE. Run current `extract_update()` against the final ZIP and confirm its root/manifest. Confirm `find_asset()` uniquely identifies expected metadata
-8. Smoke-start `main.exe` from a disposable copy of the final staging tree. Confirm it does not immediately exit and can create the Qt app/load workers. Remove smoke-created `aim/` and `active.json` before the final ZIP
+8. Smoke-start `Magia_Exedra_auto.exe` from a disposable copy of the final staging tree. Confirm it does not immediately exit and can create the Qt app/load workers. Remove smoke-created `aim/` and `active.json` before the final ZIP
 9. Push the intended branch first. Create a **draft Release**, upload the one final ZIP, wait for `state=uploaded` and the GitHub digest, then compare asset name, byte size, and SHA-256 with local values. Prefer re-downloading and rechecking before publication
 10. Publish only after all checks pass. The tag/Release must point to the exact pushed commit. Beta must be prerelease and never latest. On failure keep it draft or remove the bad asset/Release; never silently replace content under a published tag
 

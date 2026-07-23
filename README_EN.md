@@ -30,7 +30,7 @@
 
 ## Download
 
-Download the complete ZIP from [GitHub Releases](https://github.com/LUODIAN-233/Magia_Exedra_auto/releases), extract it, and run `main.exe` at the root.
+Download the complete ZIP from [GitHub Releases](https://github.com/LUODIAN-233/Magia_Exedra_auto/releases), extract it, and run `Magia_Exedra_auto.exe` at the root.
 
 > **Do not copy only the EXE.** The distribution also needs `_internal/`, `resource/`, `language/`, and `tools/` beside it.
 

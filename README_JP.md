@@ -30,7 +30,7 @@
 
 ## ダウンロード
 
-[GitHub Releases](https://github.com/LUODIAN-233/Magia_Exedra_auto/releases) から完全な ZIP をダウンロードして解凍し、ルートの `main.exe` を実行します。
+[GitHub Releases](https://github.com/LUODIAN-233/Magia_Exedra_auto/releases) から完全な ZIP をダウンロードして解凍し、ルートの `Magia_Exedra_auto.exe` を実行します。
 
 > **EXE だけをコピーしないでください。** 同じ階層に `_internal/`、`resource/`、`language/`、`tools/` が必要です。
 

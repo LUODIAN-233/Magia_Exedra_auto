@@ -398,16 +398,21 @@ def extract_update(zip_path, staging_dir, expected_version, is_cancelled=None):
                     raise ValueError('更新包条目不完整')
                 file_paths.append(target)
         roots = {os.path.relpath(p, staging_dir).split(os.sep, 1)[0] for p in file_paths}
-        direct_main = os.path.join(staging_dir, 'main.exe')
+        #入口 exe：优先项目名 Magia_Exedra_auto.exe，回退 main.exe（兼容旧版更新包）
+        direct_main = os.path.join(staging_dir, 'Magia_Exedra_auto.exe')
+        if not os.path.isfile(direct_main):
+            direct_main = os.path.join(staging_dir, 'main.exe')
         if os.path.isfile(direct_main):
             release_root = staging_dir
         elif len(roots) == 1:
             release_root = os.path.join(staging_dir, next(iter(roots)))
         else:
             raise ValueError('更新包目录结构无效')
-        main_exe = os.path.join(release_root, 'main.exe')
+        main_exe = os.path.join(release_root, 'Magia_Exedra_auto.exe')
+        if not os.path.isfile(main_exe):
+            main_exe = os.path.join(release_root, 'main.exe')
         if not os.path.isfile(main_exe) or not _validate_pe(main_exe):
-            raise ValueError('更新包缺少有效的 main.exe')
+            raise ValueError('更新包缺少有效的可执行文件')
         manifest = {}
         for path in file_paths:
             if os.path.commonpath((os.path.abspath(path), os.path.abspath(release_root))) != os.path.abspath(release_root):
@@ -433,13 +438,17 @@ def extract_update(zip_path, staging_dir, expected_version, is_cancelled=None):
 def write_update_bat(exe_path, src_dir, pid, job_dir, lock_path, job_id):
     #生成唯一 PowerShell 安装器：检查 robocopy、校验文件、清理旧受管文件，失败时不重启。
     install_dir = os.path.dirname(exe_path)
+    #新版本入口 exe 名：优先项目名，回退 main.exe（兼容旧版更新包）
+    new_exe_name = 'Magia_Exedra_auto.exe'
+    if not os.path.isfile(os.path.join(src_dir, new_exe_name)):
+        new_exe_name = 'main.exe'
     token = uuid.uuid4().hex
     bat_path = os.path.join(job_dir, f'updater_{token}.bat')
     ps_path = os.path.join(job_dir, f'updater_{token}.ps1')
     config_path = os.path.join(job_dir, f'updater_{token}.json')
     log_path = os.path.join(job_dir, 'updater.log')
     with open(config_path, 'w', encoding='utf-8') as f:
-        json.dump({'exe': exe_path, 'src': src_dir, 'dest': install_dir, 'pid': pid,
+        json.dump({'exe': exe_path, 'new_exe': new_exe_name, 'src': src_dir, 'dest': install_dir, 'pid': pid,
                    'job': job_dir, 'log': log_path, 'lock': lock_path, 'job_id': job_id,
                    'mutex': template_mutex_name(install_dir)},
                   f, ensure_ascii=False)
@@ -548,7 +557,8 @@ try {
   }
   $health = Join-Path $c.job 'startup-health'
   $env:MAGIA_UPDATE_HEALTH = $health
-  $child = Start-Process -FilePath $c.exe -WorkingDirectory $c.dest -PassThru
+  $newExe = Join-Path $c.dest $c.new_exe
+  $child = Start-Process -FilePath $newExe -WorkingDirectory $c.dest -PassThru
   $healthy = $false
   for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Milliseconds 500
