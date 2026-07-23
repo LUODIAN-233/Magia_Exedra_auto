@@ -157,10 +157,8 @@ def get_client_size(title='MadokaExedra'):
 
 def find_win(title):
     """
-    点击的事实上的使用函数
-    :param img_model_path:图片
-    :param name:这个没有实际作用，只是一个提示
-    :return:输出2代表点了，输出1代表没点
+    恢复并聚焦第一个标题匹配的窗口。
+    成功返回 (left, top, width, height)，失败返回 None；不使用模板动作的 2/1 约定。
     """
 
     try:

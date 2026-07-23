@@ -1,6 +1,12 @@
 import os
 import sys
 import threading
+import webbrowser
+import subprocess
+import tempfile
+import shutil
+import uuid
+import time
 import winreg
 
 # 必须在间接导入 cv2 前设置，打包环境下才会生效。
@@ -11,7 +17,8 @@ from datetime import datetime
 
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QRadioButton,
                                QPlainTextEdit, QWidget, QPushButton, QLabel, QLineEdit,
-                               QComboBox, QSizePolicy, QStackedWidget, QVBoxLayout)
+                               QComboBox, QSizePolicy, QStackedWidget, QVBoxLayout,
+                               QMessageBox, QProgressDialog, QCheckBox)
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon, QIntValidator
 
@@ -200,8 +207,23 @@ class LanguageSwitcherWidget(QWidget):
 class mywindow(QWidget):
     #GUI 入口。遍历 workers 的 REGISTRY 自动生成脚本选项和各自的参数页，
     #新增挂机模式只需在 workers/ 里写一个文件并 @register，不用改这里的 GUI 代码。
+    updateChecked = Signal(str, object)
+    updateProgress = Signal(str, int, int)
+    updateReady = Signal(str, object)
+    updateFailed = Signal(str, str)
     def __init__(self):
         super().__init__()
+
+        self._update_state = 'idle'
+        self._update_job_id = None
+        self._update_cancel = threading.Event()
+        self._update_check_thread = None
+        self._update_prepare_thread = None
+        self._update_job_dir = None
+        self._pending_update = None
+        self._update_lock_path = None
+        self._closing = False
+        self._update_manual = False
 
         #启动时确保 aim 联接可用（aim 被移走时按 config 或第一个可用 pack 自动恢复）
         language_switcher.ensure_active()
@@ -241,9 +263,16 @@ class mywindow(QWidget):
         self.button_1 = QPushButton('停下当前运行的脚本')
         self.button_1.clicked.connect(self._stop_automation)
 
-        #更新来源尚未确定，先保留统一入口，之后只需替换槽函数里的实现。
+        #检查更新：点击触发；启动时也会自动后台跑一次
         self.checkUpdateBtn = QPushButton('检查更新')
         self.checkUpdateBtn.clicked.connect(self._check_update)
+        #勾选后检查更新时包含预发布（beta）版本；默认不勾选，只更新到正式版
+        self.betaCheckBox = QCheckBox('更新至 beta 版')
+        self.betaCheckBox.setToolTip('勾选后检查更新会包含预发布（beta）版本；不勾选则只更新到正式版')
+        self.updateChecked.connect(self._on_update_checked)
+        self.updateProgress.connect(self._on_update_progress)
+        self.updateReady.connect(self._on_update_ready)
+        self.updateFailed.connect(self._on_update_failed)
 
         #语言/分辨率切换控件，切换 aim 联接指向
         self.lang_switcher = LanguageSwitcherWidget(self._automation_running)
@@ -268,9 +297,15 @@ class mywindow(QWidget):
         self.mainlayout.addWidget(self.scriptCombo)
         self.mainlayout.addWidget(self.paramStack)
         self.mainlayout.addWidget(self.startButton)
-        self.mainlayout.addWidget(self.checkUpdateBtn)
+        update_row = QHBoxLayout()
+        update_row.addWidget(self.checkUpdateBtn)
+        update_row.addWidget(self.betaCheckBox)
+        self.mainlayout.addLayout(update_row)
 
         self.setLayout(self.mainlayout)
+
+        #启动时自动后台检查一次更新（不阻塞界面，结果进日志）
+        self._check_update_async()
 
     def _build_worker_entry(self, meta):
         #为一个挂机模式创建 worker 和独立参数页，返回 entry 字典
@@ -321,7 +356,212 @@ class mywindow(QWidget):
             self._start_worker(self._entries[index])
 
     def _check_update(self):
-        self._append_log('检查更新功能已预留，尚未配置版本号和更新来源。')
+        self._check_update_async(manual=True)
+
+    def _check_update_async(self, manual=False):
+        #后台线程查 GitHub 最新发布版本，避免阻塞界面；同时只允许一个检查在跑
+        if self._update_state != 'idle' or self._closing:
+            return
+        job_id = uuid.uuid4().hex
+        self._update_job_id = job_id
+        self._update_state = 'checking'
+        self._update_manual = manual
+        self._refresh_control_state()
+        channel = 'beta' if self.betaCheckBox.isChecked() else 'stable'
+        self._append_log('正在检查更新...' + ('（含 beta）' if channel == 'beta' else ''))
+        def _work():
+            try:
+                from src.update_check import check_for_update
+                r = check_for_update(channel=channel, is_cancelled=self._update_cancel.is_set)
+            except Exception as e:
+                r = {'has_update': False, 'message': f'检查更新出错：{e}'}
+            try:
+                self.updateChecked.emit(job_id, r)
+            except RuntimeError:
+                pass  #窗口已关闭，忽略
+        self._update_check_thread = threading.Thread(target=_work, daemon=True)
+        self._update_check_thread.start()
+
+    def _on_update_checked(self, job_id, r):
+        if self._closing or job_id != self._update_job_id or self._update_state != 'checking':
+            return
+        self._update_check_thread = None
+        self._update_state = 'idle'
+        self._update_cancel.clear()
+        self._refresh_control_state()
+        if not isinstance(r, dict):
+            self._append_log(str(r))
+            return
+        self._append_log(r.get('message', ''))
+        if r.get('has_update'):
+            self._offer_update(r)
+
+    def _local_version_disp(self):
+        from src.update_check import VERSION
+        return VERSION if VERSION[:1] in ('v', 'V') else f'v{VERSION}'
+
+    def _offer_update(self, r):
+        #有新版本时：打包版弹对话框询问是否更新；源码模式回退为打开 Release 页
+        from src.update_check import is_frozen
+        tag = r.get('latest_tag', '')
+        url = r.get('url') or r.get('asset_url') or 'https://github.com/LUODIAN-233/Magia_Exedra_auto/releases'
+        if not is_frozen():
+            if self._update_manual:
+                self._append_log('当前为源码运行模式，已打开 Release 页面，请手动更新或 git pull。')
+                webbrowser.open(url)
+            else:
+                self._append_log(f'当前为源码运行模式，请前往 {url} 手动更新或 git pull。')
+            return
+        asset_url = r.get('asset_url')
+        if not asset_url or not r.get('asset_sha256'):
+            self._append_log('Release 未提供唯一且带 SHA-256 的更新 ZIP，已禁用自动安装。')
+            if self._update_manual:
+                webbrowser.open(url)
+            return
+        if self._automation_running():
+            self._append_log('挂机或素材缩放正在运行，请停止后再开始更新。')
+            return
+        size_mb = (r.get('asset_size') or 0) // 1024 // 1024
+        reply = QMessageBox.question(
+            self, '发现新版本',
+            f'发现新版本 {tag}（当前 {self._local_version_disp()}）。\n'
+            f'是否现在下载并更新？\n\n'
+            f'更新包约 {size_mb} MB，下载完成后程序将退出、自动替换文件并重启。',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if reply == QMessageBox.Yes:
+            try:
+                self._start_download(r)
+            except Exception as e:
+                self._append_log(f'无法开始更新：{e}')
+                self._reset_update_state(cleanup=True)
+
+    def _start_download(self, r):
+        from src.update_check import (download_asset, extract_update, UpdateCancelled,
+                                      acquire_update_lock)
+        if self._update_state != 'idle' or self._automation_running() or self._closing:
+            self._append_log('当前有其它任务运行，不能开始更新。')
+            return
+        job_id = uuid.uuid4().hex
+        asset_url = r['asset_url']
+        job_dir = tempfile.mkdtemp(prefix=f'magia_exedra_update_{os.getpid()}_')
+        zip_path = os.path.join(job_dir, 'update.zip')
+        staging = os.path.join(job_dir, 'staging')
+        self._update_job_id = job_id
+        self._update_job_dir = job_dir
+        try:
+            self._update_lock_path = acquire_update_lock(
+                os.path.dirname(sys.executable), job_id, job_dir,
+            )
+        except Exception:
+            shutil.rmtree(job_dir, ignore_errors=True)
+            self._update_job_id = None
+            self._update_job_dir = None
+            raise
+        self._update_cancel.clear()
+        self._update_state = 'downloading'
+        self._progress = QProgressDialog('正在下载更新包...', '取消', 0, 100, self)
+        self._progress.setWindowTitle('更新')
+        self._progress.setWindowModality(Qt.WindowModal)
+        self._progress.setMinimumDuration(0)
+        self._progress.setAutoClose(False)
+        self._progress.setAutoReset(False)
+        self._progress.setValue(0)
+        self._progress.canceled.connect(self._on_update_cancel)
+        self._refresh_control_state()
+        def _work():
+            try:
+                def _cb(done, total):
+                    try:
+                        self.updateProgress.emit(job_id, done, total)
+                    except RuntimeError:
+                        pass
+                download_asset(
+                    asset_url, zip_path, r['asset_size'], r['asset_sha256'],
+                    progress_cb=_cb, is_cancelled=self._update_cancel.is_set,
+                )
+                self.updateProgress.emit(job_id, -1, -1)
+                src = extract_update(
+                    zip_path, staging, r.get('latest_tag', ''), self._update_cancel.is_set,
+                )
+                self.updateReady.emit(job_id, {'src_dir': src, 'job_dir': job_dir})
+            except UpdateCancelled as e:
+                shutil.rmtree(job_dir, ignore_errors=True)
+                self.updateFailed.emit(job_id, str(e))
+            except Exception as e:
+                shutil.rmtree(job_dir, ignore_errors=True)
+                self.updateFailed.emit(job_id, str(e))
+        self._update_prepare_thread = threading.Thread(target=_work, daemon=True)
+        self._update_prepare_thread.start()
+
+    def _on_update_progress(self, job_id, done, total):
+        if self._closing or job_id != self._update_job_id or not hasattr(self, '_progress'):
+            return
+        if done < 0:  #解压阶段
+            self._update_state = 'extracting'
+            self._progress.setMaximum(0)
+            self._progress.setLabelText('正在解压更新包...')
+            return
+        if total > 0:
+            self._progress.setMaximum(100)
+            self._progress.setValue(int(done * 100 / total))
+            self._progress.setLabelText(f'正在下载... {done // 1024 // 1024}/{total // 1024 // 1024} MB')
+        else:
+            self._progress.setMaximum(0)
+            self._progress.setLabelText('正在下载更新包...')
+
+    def _on_update_ready(self, job_id, payload):
+        if self._closing or job_id != self._update_job_id \
+                or self._update_state not in ('downloading', 'extracting'):
+            return
+        self._update_prepare_thread = None
+        self._update_state = 'ready'
+        if hasattr(self, '_progress'):
+            self._progress.close()
+        self._pending_update = payload
+        self._append_log('更新包已通过校验，正在安全停止后台任务并准备安装...')
+        self.close()
+
+    def _on_update_failed(self, job_id, msg):
+        if self._closing or job_id != self._update_job_id:
+            return
+        self._update_prepare_thread = None
+        if hasattr(self, '_progress'):
+            self._progress.close()
+        self._append_log(msg if '取消' in msg else f'更新失败：{msg}')
+        self._reset_update_state(cleanup=False)
+
+    def _on_update_cancel(self):
+        if self._update_state not in ('downloading', 'extracting'):
+            return
+        self._update_cancel.set()
+        self._progress.setLabelText('正在取消更新并清理临时文件...')
+        self._progress.setCancelButton(None)
+
+    def _apply_update(self, payload):
+        #写批处理：等本进程退出后 robocopy 覆盖安装目录并重启；然后退出
+        from src.update_check import write_update_bat
+        exe_path = sys.executable
+        bat_path = write_update_bat(
+            exe_path, payload['src_dir'], os.getpid(), payload['job_dir'], self._update_lock_path,
+            self._update_job_id,
+        )
+        self._append_log('更新已准备就绪，程序即将退出完成安装。')
+        subprocess.Popen(['cmd', '/c', bat_path],
+                         creationflags=subprocess.CREATE_NO_WINDOW,
+                         close_fds=True)
+
+    def _reset_update_state(self, cleanup=True):
+        from src.update_check import release_update_lock
+        release_update_lock(self._update_lock_path, self._update_job_id)
+        if cleanup and self._update_job_dir:
+            shutil.rmtree(self._update_job_dir, ignore_errors=True)
+        self._update_state = 'idle'
+        self._update_job_id = None
+        self._update_job_dir = None
+        self._pending_update = None
+        self._update_lock_path = None
+        self._update_cancel.clear()
+        self._refresh_control_state()
 
     def _append_log(self, text):
         self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {text}")
@@ -375,12 +615,15 @@ class mywindow(QWidget):
             lo, hi = spec.min, spec.max
             def getter():
                 text = input_edit.text()
-                if text == '':
-                    return lo + 1
-                return max(lo, min(hi, int(text))) + 1  #显示值 +1 = 存储值
+                if not input_edit.hasAcceptableInput() or text == '':
+                    raise ValueError(f'{spec.label} 输入无效，请输入 {lo} 到 {hi} 的整数。')
+                value = int(text)
+                if not lo <= value <= hi:
+                    raise ValueError(f'{spec.label} 超出范围。')
+                return value + 1  #显示值 +1 = 存储值
             controls.extend([min_btn, minus_btn, input_edit, plus_btn, max_btn])
 
-        else:  # 'int' 普通整数输入，留作扩展
+        elif spec.kind == 'int':
             input_edit = QLineEdit(str(spec.default))
             input_edit.setValidator(QIntValidator(spec.min, spec.max, self))
             input_edit.setAlignment(Qt.AlignCenter)
@@ -388,10 +631,13 @@ class mywindow(QWidget):
             lo, hi = spec.min, spec.max
             def getter():
                 text = input_edit.text()
-                if text == '':
-                    return lo
-                return max(lo, min(hi, int(text)))
+                if not input_edit.hasAcceptableInput() or text == '':
+                    raise ValueError(f'{spec.label} 输入无效，请输入 {lo} 到 {hi} 的整数。')
+                return int(text)
             controls.append(input_edit)
+
+        else:
+            raise ValueError(f'不支持的参数控件类型: {spec.kind}')
 
         return layout, getter, controls
 
@@ -436,25 +682,68 @@ class mywindow(QWidget):
         return any(e['worker'].isRunning() for e in self._entries) \
             or getattr(self.lang_switcher, '_scaling', False)
 
+    def _update_busy(self):
+        return self._update_state in ('downloading', 'extracting', 'ready', 'closing')
+
+    def _refresh_control_state(self):
+        if not hasattr(self, 'checkUpdateBtn'):
+            return
+        automation_busy = self._automation_running()
+        update_busy = self._update_busy()
+        controls_enabled = not automation_busy and not update_busy and not self._closing
+        self.scriptTitle.setEnabled(controls_enabled)
+        self.scriptCombo.setEnabled(controls_enabled)
+        self.startButton.setEnabled(controls_enabled and bool(self._entries))
+        for entry in self._entries:
+            for control in entry['controls']:
+                control.setEnabled(controls_enabled)
+        self.lang_switcher.setEnabled(controls_enabled)
+        checking = self._update_state == 'checking'
+        self.checkUpdateBtn.setEnabled(not checking and not update_busy and not self._closing)
+        self.betaCheckBox.setEnabled(not checking and not update_busy and not self._closing)
+
     def closeEvent(self, event):
         #先协作停止后台任务，避免窗口销毁后线程继续点击或向 Qt 对象发信号。
+        self._closing = True
+        self._refresh_control_state()
         for entry in self._entries:
             entry['worker'].stop()
         self.lang_switcher._scale_cancel.set()
+        self._update_cancel.set()
 
         workers_stopped = True
+        deadline = time.monotonic() + 12
         for entry in self._entries:
             worker = entry['worker']
-            if worker.isRunning() and not worker.wait(5000):
+            remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+            if worker.isRunning() and not worker.wait(remaining_ms):
                 workers_stopped = False
         scale_thread = self.lang_switcher._scale_thread
         if scale_thread and scale_thread.is_alive():
-            scale_thread.join(timeout=5)
+            scale_thread.join(timeout=max(0, deadline - time.monotonic()))
+        for thread in (self._update_check_thread, self._update_prepare_thread):
+            if thread and thread.is_alive():
+                thread.join(timeout=max(0, deadline - time.monotonic()))
 
-        if not workers_stopped or (scale_thread and scale_thread.is_alive()):
+        update_alive = any(t and t.is_alive() for t in (self._update_check_thread, self._update_prepare_thread))
+        if not workers_stopped or (scale_thread and scale_thread.is_alive()) or update_alive:
             self._append_log('后台任务尚未安全停止，请稍后再关闭窗口。')
+            self._closing = False
+            self._refresh_control_state()
             event.ignore()
             return
+        if self._pending_update:
+            try:
+                self._update_state = 'closing'
+                self._apply_update(self._pending_update)
+            except Exception as e:
+                self._append_log(f'启动更新安装器失败：{e}')
+                self._closing = False
+                self._reset_update_state(cleanup=True)
+                event.ignore()
+                return
+        else:
+            self._reset_update_state(cleanup=True)
         event.accept()
 
     def _stop_automation(self):
@@ -473,8 +762,13 @@ class mywindow(QWidget):
         self.lang_switcher.setEnabled(enabled)
 
     def _start_worker(self, entry):
-        if self._automation_running():
+        if self._automation_running() or self._update_busy() or self._closing:
             self.textedit_1.appendPlainText('已有挂机任务运行中，请先停止。')
+            return
+        from src.update_check import update_recovery_issue
+        recovery = update_recovery_issue(os.path.dirname(sys.executable))
+        if recovery:
+            self._append_log(f'检测到上次更新回滚不完整，已禁止挂机。请按文件提示恢复：{recovery}')
             return
         from src.click import click_behavior, click_action
         if click_behavior.find_win('MadokaExedra') is None:
@@ -484,20 +778,37 @@ class mywindow(QWidget):
         res_info = click_action.detect_window_resolution()
         self._append_log(res_info['message'])
         if not res_info['matched']:
-            self._append_log('分辨率不一致可能导致识图失败，请确认游戏窗口分辨率与所选模板 pack 一致。')
+            self._append_log('无法确认窗口与模板分辨率一致，为防止坐标误点，本次挂机未启动。')
+            return
+        selection = language_switcher.current_selection()
+        if selection is None:
+            self._append_log('当前没有有效的模板 pack，本次挂机未启动。')
+            return
+        valid, errors = language_switcher.validate_template_groups(
+            selection[0], selection[1], entry['meta'].required_templates,
+        )
+        if not valid:
+            self._append_log('当前模板 pack 不完整，本次挂机未启动：\n' + '\n'.join(errors[:20]))
+            return
         #收集 GUI 参数到 worker（lp_recover 已在 getter 里 +1 为存储值）
         worker = entry['worker']
-        for key, getter in entry['getters'].items():
-            setattr(worker, key, getter())
+        try:
+            for key, getter in entry['getters'].items():
+                setattr(worker, key, getter())
+        except (TypeError, ValueError) as e:
+            self._append_log(str(e))
+            return
+        worker.expected_pack = selection
         if entry['meta'].start_hint:
             self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {entry['meta'].start_hint}")
         self._set_automation_controls(False)
-        worker.start()
+        if not worker.start():
+            self._set_automation_controls(True)
 
     def _automation_finished(self):
         #某个 worker 结束时：若已无 worker 在跑（且没在缩放），恢复所有控件
         if not self._automation_running():
-            self._set_automation_controls(True)
+            self._refresh_control_state()
 
     def _scaling_changed(self, scaling):
         if scaling:
@@ -508,7 +819,7 @@ class mywindow(QWidget):
                 for c in e['controls']:
                     c.setEnabled(False)
         elif not self._automation_running():
-            self._set_automation_controls(True)
+            self._refresh_control_state()
 
 
 if __name__ == '__main__':
@@ -550,4 +861,11 @@ if __name__ == '__main__':
     app = QApplication([])
     window = mywindow()
     window.show()
+    health_path = os.environ.get('MAGIA_UPDATE_HEALTH')
+    if health_path:
+        try:
+            with open(health_path, 'x', encoding='ascii') as f:
+                f.write('ok')
+        except OSError:
+            pass
     app.exec()

@@ -36,6 +36,31 @@ from .registry import register, ParamSpec
         ),
     ],
     start_hint='需要在游戏主界面启动本挂机系统',
+    required_templates=[
+        'quests/link_raid',
+        'quests/link_raid/backup_requests',
+        'quests/link_raid/backup_requests/backup_requests',
+        'quests/link_raid/backup_requests/refresh',
+        'quests/link_raid/backup_requests/no_join',
+        'quests/link_raid/backup_requests/joined_battles',
+        'quests/link_raid/joined_battles/win',
+        'quests/link_raid/joined_battles/ended',
+        'quests/link_raid/backup_requests/join',
+        'quests/link_raid/backup_requests/no_lp/no_lp',
+        'quests/link_raid/backup_requests/no_lp/ok',
+        'quests/link_raid/backup_requests/join/play',
+        'quests/link_raid/backup_requests/join/ok',
+        'quests/link_raid/backup_requests/join/full/already_end',
+        'quests/link_raid/backup_requests/battle/tap_to_countinue',
+        'quests/link_raid/backup_requests/battle/back',
+        'quests/link_raid/backup_requests/lv/lv6/lv6',
+        'quests/link_raid/backup_requests/lv/lv7/lv7',
+        'quests/link_raid/backup_requests/lv/lv8/lv8',
+        'quests/link_raid/backup_requests/lv/lv9/lv9',
+        'quests/link_raid/backup_requests/lv/lv10/lv10',
+        'quests/link_raid/backup_requests/lv/lv11/lv11',
+        'quests/link_raid/backup_requests/lv/lv12/lv12',
+    ],
 )
 class LinkRaidWorker(BaseWorker):
     def __init__(self, level=6, lp_recover_times=1):
@@ -50,6 +75,13 @@ class LinkRaidWorker(BaseWorker):
         self._run_safely(self._run)
 
     def _run(self):
+        if isinstance(self.level_choice, bool) or self.level_choice not in range(6, 13):
+            self.signal.emit('Link Raid 等级参数无效，本次挂机已停止。')
+            return
+        if isinstance(self.lp_recover_times, bool) or not isinstance(self.lp_recover_times, int) \
+                or not 1 <= self.lp_recover_times <= 11:
+            self.signal.emit('喝体力药次数参数无效，本次挂机已停止。')
+            return
         print('执行LinkRaidWorker,两秒钟后启动！\n')
         self.signal.emit(str('启动link raid挂机'))
 
@@ -114,11 +146,17 @@ class LinkRaidWorker(BaseWorker):
 
         if not self._running():
             return
-        click_action.click_position_scaled(2000, 1000, self._running)
+        if click_action.click_position_scaled(2000, 1000, self._running) != 2:
+            self.signal.emit('无法安全执行初始坐标点击，本次挂机已停止。')
+            self._finish()
+            return
         self.signal.emit(str('把游戏弄到前台，然后随便碰一下中间'))
         if self._wait(0.2):
             return
-        click_action.click_position_scaled(2400, 1200, self._running)
+        if click_action.click_position_scaled(2400, 1200, self._running) != 2:
+            self.signal.emit('无法安全执行 quests 坐标点击，本次挂机已停止。')
+            self._finish()
+            return
         self.signal.emit(str('quests点击完成，这一下使用的是位置点击，不是识图，如果没有点到说明其他问题发生了'))
         if self._wait(0.2):
             return
@@ -328,6 +366,7 @@ class LinkRaidWorker(BaseWorker):
             self.signal.emit(str(f'剩余喝体力药的次数是{self.LP_full_add}，0就是不喝药了，结束挂机'))
             if self.LP_full_add == 0:  # 剩余喝药次数耗尽
                 self._finish()
+                return
             else:
                 result = self._click_until('./aim/quests/link_raid/backup_requests/no_lp/ok', 'ok')
                 if result == 2:

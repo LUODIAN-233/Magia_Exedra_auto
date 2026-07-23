@@ -25,11 +25,12 @@ import hashlib
 import json
 import tempfile
 import time
+import re
 
 try:
-    from src.packs.file_lock import template_write_lock
+    from src.packs.file_lock import template_write_lock, TemplateOperationCancelled
 except ModuleNotFoundError:  #支持直接运行本文件排查
-    from file_lock import template_write_lock
+    from file_lock import template_write_lock, TemplateOperationCancelled
 
 SOURCE_RES = "2560x1440"   #2K 是唯一的标准源，所有缩放都从它派生
 SOURCE_W = 2560
@@ -38,6 +39,11 @@ SOURCE_H = 1440
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 MANIFEST_NAME = ".source_hashes.json"
 RECIPE_VERSION = 1
+SCALE_FACTORS = {
+    "1280x720": 0.5,
+    "1920x1080": 0.75,
+    "3840x2160": 1.5,
+}
 
 
 def base_dir():
@@ -95,8 +101,9 @@ def _run_magick(src, dst, factor, is_cancelled=None):
             if (is_cancelled and is_cancelled()) or time.monotonic() >= deadline:
                 process.kill()
                 process.wait()
-                reason = "素材缩放已取消" if is_cancelled and is_cancelled() else "ImageMagick 运行超时"
-                raise RuntimeError(reason)
+                if is_cancelled and is_cancelled():
+                    raise TemplateOperationCancelled("素材缩放已取消")
+                raise RuntimeError("ImageMagick 运行超时")
             time.sleep(0.1)
         if process.returncode:
             raise subprocess.CalledProcessError(process.returncode, cmd)
@@ -124,7 +131,7 @@ def _is_reparse(path):
 
 def _inside(path, root):
     try:
-        return os.path.commonpath((os.path.abspath(path), os.path.abspath(root))) == os.path.abspath(root)
+        return os.path.commonpath((os.path.realpath(path), os.path.realpath(root))) == os.path.realpath(root)
     except (OSError, ValueError):
         return False
 
@@ -175,10 +182,12 @@ def _walk_images(root, errors=None):
                 yield full, rel
 
 
-def _file_hash(path):
+def _file_hash(path, is_cancelled=None):
     digest = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            if is_cancelled and is_cancelled():
+                raise TemplateOperationCancelled("素材缩放已取消")
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -189,18 +198,35 @@ def _load_manifest(dst_dir):
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
-            return {}
+            return {}, "corrupt"
         result = {}
         for key, value in data.items():
             if _safe_rel_path(key) is None:
-                continue
-            if isinstance(value, str):
-                result[key] = {"source": value}
-            elif isinstance(value, dict) and isinstance(value.get("source"), str):
-                result[key] = value
-        return result
+                return {}, "corrupt"
+            if not isinstance(value, dict) or not all(
+                    isinstance(value.get(k), str) for k in ("source", "target", "recipe")):
+                return {}, "corrupt"
+            result[key] = value
+        return result, "ok"
+    except FileNotFoundError:
+        return {}, "missing"
     except (OSError, ValueError):
-        return {}
+        return {}, "corrupt"
+
+
+def _magick_fingerprint():
+    prefix, env = _magick_cmd()
+    completed = subprocess.run(
+        prefix + ["-version"], check=True, capture_output=True, timeout=15, env=env,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    digest = hashlib.sha256()
+    executable = shutil.which(prefix[0]) or prefix[0]
+    digest.update(os.path.normcase(os.path.realpath(executable)).encode("utf-8"))
+    digest.update(completed.stdout)
+    if os.path.isfile(executable):
+        digest.update(_file_hash(executable).encode("ascii"))
+    return digest.hexdigest()[:16]
 
 
 def _save_manifest(dst_dir, data):
@@ -225,38 +251,29 @@ def scale_factor(res):
     支持 0.5x（1280x720，下采样）、0.75x（1920x1080，下采样）、1.5x（3840x2160，上采样）；
     比例不是 16:9、或就是 2K 源本身，都返回 None。
     """
-    try:
-        w_s, h_s = res.lower().split("x")
-        w, h = int(w_s), int(h_s)
-    except Exception:
-        return None
-    factor = w / SOURCE_W
-    #高度必须按同样倍数缩放（16:9 一致），用 round 容错浮点
-    if round(h / SOURCE_H, 4) != round(factor, 4):
-        return None
-    if abs(factor - 1.0) < 1e-9:    #1x 就是 2K 源自己，不需要缩放
-        return None
-    if factor == int(factor):       #整数倍（2、3、...）直接返回 int
-        return int(factor)
-    if abs(factor - 1.5) < 1e-9:    #1.5 倍（3840x2160，上采样）
-        return 1.5
-    if abs(factor - 0.75) < 1e-9:   #0.75 倍（1920x1080，下采样）
-        return 0.75
-    if abs(factor - 0.5) < 1e-9:    #0.5 倍（1280x720，下采样）
-        return 0.5
-    return None                     #其它非整数倍不支持，避免严重失真
+    return SCALE_FACTORS.get(res) if isinstance(res, str) else None
 
 
-def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None, is_cancelled=None):
+def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None, is_cancelled=None, tool_fingerprint=None):
     """
     把某个语言的 2K 源 pack 按倍率缩放到该语言下所有可缩放的分辨率 pack。
     目标不存在或比源文件旧时生成，其余文件跳过。
     返回 (生成张数, 跳过张数, 详情列表)。
     """
+    if not isinstance(lang, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", lang) \
+            or src_res != SOURCE_RES:
+        return 0, 0, ["语言或源分辨率参数无效，跳过"]
     src_dir = os.path.join(LANGUAGE_DIR, lang, f"{lang}_{src_res}")
     lang_dir = os.path.join(LANGUAGE_DIR, lang)
-    if not os.path.isdir(src_dir) or _is_reparse(lang_dir) or _is_reparse(src_dir):
+    if not _inside(lang_dir, LANGUAGE_DIR) or not _inside(src_dir, LANGUAGE_DIR) \
+            or not os.path.isdir(lang_dir) or not os.path.isdir(src_dir) \
+            or _is_reparse(lang_dir) or _is_reparse(src_dir):
         return 0, 0, [f"{lang} 没有安全可用的 {src_res} 源 pack，跳过"]
+    if tool_fingerprint is None:
+        try:
+            tool_fingerprint = _magick_fingerprint()
+        except Exception as e:
+            return 0, 0, [f"无法确认 ImageMagick 工具链，跳过缩放: {e}"]
 
     generated = 0
     skipped = 0
@@ -276,7 +293,9 @@ def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None, is_cancelled=None):
         if not os.path.isdir(dst_dir) or _is_reparse(dst_dir):
             notes.append(f"跳过不安全的目标 pack: {lang} {res}")
             continue
-        manifest = _load_manifest(dst_dir)
+        manifest, manifest_status = _load_manifest(dst_dir)
+        if manifest_status == "corrupt":
+            notes.append(f"{lang} {res} 的缩放记录损坏，将按 2K 源重建")
         next_manifest = {}
         source_paths = set()
         scan_errors = []
@@ -294,32 +313,37 @@ def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None, is_cancelled=None):
                 continue
             try:
                 source_paths.add(rel_key)
-                source_hash = _file_hash(src_full)
+                source_hash = _file_hash(src_full, is_cancelled)
                 old_record = manifest.get(rel_key, {})
-                recipe = f"resize-v{RECIPE_VERSION}:{factor:g}"
+                recipe = f"resize-v{RECIPE_VERSION}:{factor:g}:im-{tool_fingerprint}"
                 if os.path.isfile(dst_full) \
                         and old_record.get("source") == source_hash \
                         and old_record.get("recipe") == recipe \
-                        and old_record.get("target") == _file_hash(dst_full):
+                        and old_record.get("target") == _file_hash(dst_full, is_cancelled):
                     skipped += 1
                     next_manifest[rel_key] = old_record
                     continue
                 _run_magick(src_full, dst_full, factor, is_cancelled)
                 next_manifest[rel_key] = {
                     "source": source_hash,
-                    "target": _file_hash(dst_full),
+                    "target": _file_hash(dst_full, is_cancelled),
                     "recipe": recipe,
                 }
                 generated += 1
             except subprocess.CalledProcessError as e:
                 err = e.stderr.decode("mbcs", "ignore") if e.stderr else str(e)
                 notes.append(f"失败 {lang} {res} {rel}: {err.strip()}")
+            except TemplateOperationCancelled:
+                scan_errors.append(TemplateOperationCancelled("素材缩放已取消"))
+                notes.append(f"{lang} {res} 素材缩放已取消")
+                break
             except Exception as e:
                 notes.append(f"失败 {lang} {res} {rel}: {e}")
         removed = 0
         if scan_errors:
             notes.append(f"{lang} {res} 源目录扫描不完整，跳过失效模板清理")
-        stale_paths = set(manifest) - source_paths
+        #只删除旧 manifest 明确管理过的派生文件；记录缺失/损坏时不能误删用户自定义模板。
+        stale_paths = set(manifest) - source_paths if manifest_status == "ok" else set()
         for rel_key in stale_paths if not scan_errors else ():
             dst_full = _safe_target_path(dst_dir, rel_key)
             if dst_full is None:
@@ -366,6 +390,10 @@ def scale_all(progress_cb=None, is_cancelled=None):
     all_notes = []
     try:
         with template_write_lock(BASE_DIR, timeout=30, is_cancelled=is_cancelled):
+            try:
+                tool_fingerprint = _magick_fingerprint()
+            except Exception as e:
+                return f"无法确认 ImageMagick 工具链，已停止缩放: {e}"
             for lang in sorted(os.listdir(LANGUAGE_DIR)):
                 if is_cancelled and is_cancelled():
                     all_notes.append("素材缩放已取消")
@@ -375,11 +403,14 @@ def scale_all(progress_cb=None, is_cancelled=None):
                     continue
                 g, s, notes = scale_pack(
                     lang, progress_cb=progress_cb, is_cancelled=is_cancelled,
+                    tool_fingerprint=tool_fingerprint,
                 )
                 total_gen += g
                 total_skip += s
                 all_notes.extend(notes)
     except TimeoutError as e:
+        all_notes.append(str(e))
+    except TemplateOperationCancelled as e:
         all_notes.append(str(e))
 
     summary = f"素材缩放处理结束: 新生成 {total_gen} 张，已存在跳过 {total_skip} 张"

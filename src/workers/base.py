@@ -15,6 +15,9 @@ import traceback
 from PySide6.QtCore import QThread, Signal
 
 from src.click import click_action
+from src.packs import language_switcher
+from src.packs.file_lock import template_write_lock
+from src.packs.file_lock import TemplateOperationCancelled
 
 
 #普通界面等待超时（秒），超时后安全停止
@@ -47,6 +50,7 @@ class BaseWorker(QThread):
         super().__init__()
         self._stop_event = threading.Event()
         self._active = False
+        self.expected_pack = None
 
     def _running(self):
         #是否仍在运行：自身未主动停止且未被 GUI 要求停止
@@ -65,9 +69,13 @@ class BaseWorker(QThread):
     def start(self, priority=QThread.InheritPriority):
         #每次启动前重置状态，保证同一个线程对象可反复启动
         #（对应原来 GUI 启动前 guaji=1、clear 事件 的两步操作）。
+        if self.isRunning():
+            self.signal.emit('挂机线程尚未结束，不能重新启动。')
+            return False
         self._stop_event.clear()
         self._active = True
         super().start(priority)
+        return True
 
     def _wait(self, seconds):
         #替代原来的 stop_event.wait(seconds)，返回 True 表示等待期间被停止打断。
@@ -76,9 +84,20 @@ class BaseWorker(QThread):
     def _run_safely(self, action):
         #QThread 的未捕获异常通常只会出现在控制台；同步报告到 GUI 便于排查。
         try:
-            action()
+            #整个挂机周期持有模板租约，阻止其它进程切换 aim 或重写派生模板。
+            with template_write_lock(
+                    language_switcher.BASE_DIR, timeout=2, is_cancelled=self._stop_event.is_set):
+                if self.expected_pack and language_switcher.current_selection() != self.expected_pack:
+                    self.signal.emit('激活模板已被其它程序改变，本次挂机已停止。')
+                    return
+                action()
+        except TemplateOperationCancelled:
+            pass
+        except TimeoutError as e:
+            self.signal.emit(f'{e}，本次挂机未启动。')
         except Exception:
             self.signal.emit('挂机线程异常退出：\n' + traceback.format_exc())
+        finally:
             self._finish()
 
     def _click_until(self, picture, name, timeout=RETRY_TIMEOUT):

@@ -18,11 +18,20 @@ WAIT_ABANDONED = 0x80
 WAIT_TIMEOUT = 0x102
 
 
+class TemplateOperationCancelled(Exception):
+    pass
+
+
+def template_mutex_name(base_dir):
+    identity = os.path.normcase(os.path.realpath(base_dir)).encode("utf-8")
+    return "Global\\MagiaExedraTemplates_" + hashlib.sha256(identity).hexdigest()
+
+
 @contextmanager
 def template_write_lock(base_dir, timeout=None, is_cancelled=None):
-    #同一仓库的切换和缩放共用命名互斥量，避免多个进程同时改模板状态。
-    identity = os.path.normcase(os.path.realpath(base_dir)).encode("utf-8")
-    name = "Local\\MagiaExedraTemplates_" + hashlib.sha256(identity).hexdigest()
+    #切换、缩放和 worker 运行期租约共用互斥量，避免 aim 在识图期间被其它进程改写。
+    #Global 命名空间同时覆盖本机不同登录/RDP session，避免共享安装目录被并发改写。
+    name = template_mutex_name(base_dir)
     handle = _kernel32.CreateMutexW(None, False, name)
     if not handle:
         raise OSError(ctypes.get_last_error(), "创建模板管理互斥量失败")
@@ -31,7 +40,7 @@ def template_write_lock(base_dir, timeout=None, is_cancelled=None):
     try:
         while not acquired:
             if is_cancelled and is_cancelled():
-                raise TimeoutError("模板管理操作已取消")
+                raise TemplateOperationCancelled("模板管理操作已取消")
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError("另一个程序正在管理模板，请稍后重试")
             result = _kernel32.WaitForSingleObject(handle, 100)

@@ -11,6 +11,7 @@
 
 from dataclasses import dataclass, field
 from typing import List, Any
+import copy
 
 
 @dataclass
@@ -34,13 +35,14 @@ class WorkerMeta:
     worker_class: type          #BaseWorker 子类
     params: List[ParamSpec]     #参数列表
     start_hint: str = ''        #启动提示（如 '需要在游戏主界面启动'）
+    required_templates: List[str] = field(default_factory=list)
 
 
 #全局注册表，按注册顺序排列。GUI 遍历它生成控件。
 REGISTRY: List[WorkerMeta] = []
 
 
-def register(name, label, params=None, start_hint=''):
+def register(name, label, params=None, start_hint='', required_templates=None):
     #装饰器：把一个 BaseWorker 子类注册到 REGISTRY。
     #用法：
     #  @register('link_raid', 'link raid挂机启动',
@@ -48,12 +50,24 @@ def register(name, label, params=None, start_hint=''):
     #            start_hint='需要在游戏主界面启动')
     #  class LinkRaidWorker(BaseWorker): ...
     def decorator(cls):
+        if not isinstance(name, str) or not name or any(m.name == name for m in REGISTRY):
+            raise ValueError(f'worker 注册名无效或重复: {name!r}')
+        specs = list(params or [])
+        for spec in specs:
+            if spec.kind not in ('choice', 'lp_recover', 'int'):
+                raise ValueError(f'{name}.{spec.key} 的参数类型无效: {spec.kind}')
+            if spec.kind == 'choice':
+                if not spec.choices or spec.default not in spec.choices:
+                    raise ValueError(f'{name}.{spec.key} 的默认选项无效')
+            elif not (spec.min <= spec.default <= spec.max):
+                raise ValueError(f'{name}.{spec.key} 的默认值不在范围内')
         REGISTRY.append(WorkerMeta(
             name=name,
             label=label,
             worker_class=cls,
-            params=params or [],
+            params=specs,
             start_hint=start_hint,
+            required_templates=list(required_templates or []),
         ))
         return cls
     return decorator
@@ -61,4 +75,4 @@ def register(name, label, params=None, start_hint=''):
 
 def get_registry():
     #返回注册表副本，避免外部误改内部列表
-    return list(REGISTRY)
+    return copy.deepcopy(REGISTRY)

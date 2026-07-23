@@ -15,6 +15,8 @@ import re
 import stat
 import subprocess
 import tempfile
+import struct
+import zlib
 
 try:
     from src.packs.file_lock import template_write_lock
@@ -137,9 +139,109 @@ def pack_usable(lang, res):
         return False
     for root, dirs, files in os.walk(d):
         dirs[:] = [name for name in dirs if not _is_link(os.path.join(root, name))]
-        if any(f.lower().endswith(".png") for f in files):
-            return True
+        for filename in files:
+            path = os.path.join(root, filename)
+            if filename.lower().endswith(".png") and not _is_link(path) and _valid_png(path):
+                return True
     return False
+
+
+def _valid_png(path):
+    #完整检查 PNG chunk 长度、CRC、IHDR/IEND，避免截断文件让 pack 被误判为完整。
+    try:
+        seen_idat = False
+        with open(path, "rb") as f:
+            if f.read(8) != b"\x89PNG\r\n\x1a\n":
+                return False
+            first = True
+            while True:
+                raw_length = f.read(4)
+                if len(raw_length) != 4:
+                    return False
+                length = struct.unpack(">I", raw_length)[0]
+                if length > 256 * 1024 * 1024:
+                    return False
+                chunk_type = f.read(4)
+                data = f.read(length)
+                raw_crc = f.read(4)
+                if len(chunk_type) != 4 or len(data) != length or len(raw_crc) != 4:
+                    return False
+                if zlib.crc32(chunk_type + data) & 0xffffffff != struct.unpack(">I", raw_crc)[0]:
+                    return False
+                if first:
+                    if chunk_type != b"IHDR" or length != 13 \
+                            or not all(v > 0 for v in struct.unpack(">II", data[:8])):
+                        return False
+                    bit_depth, color_type, compression, filtering, interlace = data[8:13]
+                    valid_depths = {
+                        0: {1, 2, 4, 8, 16}, 2: {8, 16}, 3: {1, 2, 4, 8},
+                        4: {8, 16}, 6: {8, 16},
+                    }
+                    if bit_depth not in valid_depths.get(color_type, set()) \
+                            or compression != 0 or filtering != 0 or interlace not in (0, 1):
+                        return False
+                    first = False
+                elif chunk_type == b"IHDR":
+                    return False
+                if chunk_type == b"IDAT":
+                    seen_idat = True
+                if chunk_type == b"IEND":
+                    if length != 0 or not seen_idat or f.read(1) != b"":
+                        return False
+                    break
+        #Pillow 是 PyAutoGUI 的运行依赖；verify 会实际解析流并拒绝截断/不可解码 PNG。
+        from PIL import Image
+        with Image.open(path) as image:
+            image.verify()
+        with Image.open(path) as image:
+            image.load()
+        return True
+    except Exception:
+        #包含 Pillow 的 DecompressionBombError、解码错误和截断流。
+        return False
+
+
+def validate_template_groups(lang, res, groups):
+    """检查模式所需模板组的 _1.png、PNG 头及编号连续性。"""
+    if not _valid_pack_id(lang, res):
+        return False, ["语言或分辨率格式无效"]
+    root = _pack_dir(lang, res)
+    if not _inside(root, LANGUAGE_DIR) or _is_link(root) or not os.path.isdir(root):
+        return False, ["模板 pack 不存在或路径不安全"]
+    errors = []
+    for group in groups:
+        if not isinstance(group, str) or not group or "\\" in group:
+            errors.append(f"模板组路径无效: {group!r}")
+            continue
+        base = os.path.abspath(os.path.join(root, group.replace("/", os.sep)))
+        if not _inside(base, root):
+            errors.append(f"模板组越出 pack: {group}")
+            continue
+        first = base + "_1.png"
+        if not os.path.isfile(first) or _is_link(first) or not _valid_png(first):
+            errors.append(f"缺失或损坏: {group}_1.png")
+            continue
+        index = 1
+        while os.path.isfile(base + f"_{index}.png"):
+            path = base + f"_{index}.png"
+            if _is_link(path) or not _valid_png(path):
+                errors.append(f"缺失或损坏: {group}_{index}.png")
+                break
+            index += 1
+        parent = os.path.dirname(base)
+        prefix = os.path.basename(base) + "_"
+        try:
+            later = [name for name in os.listdir(parent)
+                     if name.startswith(prefix) and name.lower().endswith(".png")]
+        except OSError as e:
+            errors.append(f"无法读取模板组 {group}: {e}")
+            continue
+        for name in later:
+            suffix = name[len(prefix):-4]
+            if suffix.isdigit() and int(suffix) >= index:
+                errors.append(f"模板编号不连续: {group}_{index}.png")
+                break
+    return not errors, errors
 
 
 #-----------对外功能-----------

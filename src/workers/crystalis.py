@@ -29,6 +29,7 @@ from .registry import register, ParamSpec
         ),
     ],
     start_hint='需要在选择完成关卡和队伍的界面启动。也就是点一下play就进入战斗的界面',
+    required_templates=['crystalis/play', 'crystalis/result', 'crystalis/retry', 'crystalis/ok'],
 )
 class CrystalisWorker(BaseWorker):
     def __init__(self, lp_recover_times=9):
@@ -41,6 +42,10 @@ class CrystalisWorker(BaseWorker):
         self._run_safely(self._run)
 
     def _run(self):
+        if isinstance(self.lp_recover_times, bool) or not isinstance(self.lp_recover_times, int) \
+                or not 1 <= self.lp_recover_times <= 9:
+            self.signal.emit('喝体力药次数参数无效，本次挂机已停止。')
+            return
         print('执行CrystalisWorker,两秒钟后启动！\n')
         self.signal.emit(str('启动刷晶花挂机'))
 
@@ -55,7 +60,9 @@ class CrystalisWorker(BaseWorker):
 
         if self._wait(2):
             return
-        click_action.click_position_scaled(2000, 1000, self._running)
+        if click_action.click_position_scaled(2000, 1000, self._running) != 2:
+            self.signal.emit('无法安全执行初始坐标点击，本次挂机已停止。')
+            return
         self.signal.emit(str('把游戏弄到前台，然后随便碰一下中间'))
         if self._wait(1):
             return
@@ -92,6 +99,8 @@ class CrystalisWorker(BaseWorker):
             if result == 2:
                 check_win = click_action.find_item_with_result(self, f'./aim/crystalis/retry', 'retry')
                 self.signal.emit(str(f'result被点击过一次，尝试寻找retry，具体的状态是{check_win}，1是没有找到，2是找到了'))
+            if check_win == 1 and self._wait(0.5):
+                return
         if check_win == 1 and self._running():
             self.signal.emit('等待晶花战斗结束超时，已安全停止。')
             self._finish()
@@ -110,6 +119,7 @@ class CrystalisWorker(BaseWorker):
             self.signal.emit(str(f'体力用完了，剩余体力恢复次数还是{self.lp_recover}'))
             if self.lp_recover == 0:
                 self._finish()
+                return
 
             result = 1
             result = self._click_until('./aim/crystalis/ok', 'ok')

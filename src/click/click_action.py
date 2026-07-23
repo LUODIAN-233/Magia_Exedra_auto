@@ -149,20 +149,28 @@ def move_a_to_b(move_lelt_a, move_top_a, move_lelt_b, move_top_b, can_move=None)
 def _res_scale_factor():
     sel = language_switcher.current_selection()
     if not sel or not sel[1]:
+        return None
+    if sel[1] == image_scaler.SOURCE_RES:
         return 1.0
     f = image_scaler.scale_factor(sel[1])
-    return f if f else 1.0
+    return f
 
 
 def click_position_scaled(x_2k, y_2k, can_click=None):
     #把 2K 基准坐标按当前分辨率缩放后点击
     f = _res_scale_factor()
+    if f is None:
+        print('无法确认模板 pack 的坐标缩放倍率，拒绝位置点击')
+        return 1
     return click_position(round(x_2k * f), round(y_2k * f), can_click)
 
 
 def move_a_to_b_scaled(ax_2k, ay_2k, bx_2k, by_2k, can_move=None):
     #把 2K 基准起止坐标按当前分辨率缩放后拖拽
     f = _res_scale_factor()
+    if f is None:
+        print('无法确认模板 pack 的坐标缩放倍率，拒绝拖拽')
+        return 1
     return move_a_to_b(
         round(ax_2k * f), round(ay_2k * f),
         round(bx_2k * f), round(by_2k * f),

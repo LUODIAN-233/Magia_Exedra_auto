@@ -39,11 +39,11 @@
 ### General Features
 
 - Brings the game window to the foreground on startup
-- Before starting, detects the game window's client-area resolution and compares it with the selected template pack using a tolerant margin (accommodates small drift from title bar / borders / DPI scaling); logs a warning on mismatch
+- Before starting, detects the game window's client-area resolution and compares it with the selected template pack using a tolerant margin (accommodates small drift from title bar / borders / DPI scaling); refuses to start when consistency cannot be confirmed, preventing hard-coded coordinate misclicks
 - Stop button can interrupt any farming task at any time
 - The two farming modes are mutually exclusive; template switching and refresh are disabled while a task is running
 - Select a farming script from a dropdown; only that script's parameters are shown, so new modes do not keep extending the window vertically
-- Includes a `检查更新` entry; the button is currently reserved because no version source has been configured
+- Automatically checks for updates via GitHub Releases on startup; the `检查更新` button also allows manual checks. Only strictly newer versions are flagged (downgrade-proof). The packaged exe auto-installs only a unique, strictly named ZIP with a GitHub SHA-256 digest, after safe extraction and file validation; a manual source-mode check can open the Release page
 - Automatically stops safely if a normal screen is not recognized within 60 seconds or a battle within 30 minutes
 - Recognition captures only the game window; missing windows or invalid templates are reported instead of crashing
 - Language / resolution switching (supports English, Japanese; multi-resolution assets auto-scaled)
@@ -151,8 +151,12 @@ Automatically scales the 2K (2560×1440) source assets to other resolutions:
 
 ### 5. Check for updates
 
-- Clicking `检查更新` reports the current update status in the log
-- No update source is configured yet, so this button is currently only an entry point for a future GitHub Releases or update-service integration
+- The bot checks for updates once on startup in the background; you can also click `检查更新` at any time to trigger it manually
+- It queries GitHub Releases for the latest version and only flags an update when the remote version is strictly greater than the local one (downgrade-proof)
+- The check runs in a background thread and never blocks the UI; network failures or "no update" are simply reported in the log
+- By default only stable releases are considered; tick "更新至 beta 版" to also include pre-release (beta) versions. Pre-release versions are compared per semver (release > same-version pre-release), downgrade-proof
+- In the packaged exe, automatic installation is offered only when the Release has one strictly named ZIP with a GitHub SHA-256 digest. Download cancellation is real, and size, SHA-256, ZIP paths, extracted size, and `main.exe` are validated
+- Before installation, the bot safely stops and waits for automation, scaling, and update threads. The installer checks copy results and file hashes; on failure it restores overwritten files and does not restart. A manual source-mode check opens the Release page
 
 ---
 
@@ -163,6 +167,7 @@ Automatically scales the 2K (2560×1440) source assets to other resolutions:
 - The **game window must be in the foreground and unobstructed**; the bot window itself can remain in the background
 - The first click of Link Raid uses **hardcoded coordinates** (`2000,1000` → `2400,1200`, 2K baseline); they auto-scale to the active resolution, so 720p / 1080p / 2K / 4K all work
 - The game must run in **16:9** windowed mode, and the template's language and resolution must match the game
+- Before starting a mode, required `_1.png` templates, PNG headers, and numbering continuity are checked. A cross-process template lease is held while automation runs, so another instance cannot switch or rewrite templates in the same installation
 - The JP server can be switched to EN in-game to reuse the English templates without re-capturing screenshots
 
 ---
@@ -181,9 +186,10 @@ Magia_Exedra_auto/
 │   ├── click/               # Click module package
 │   │   ├── click_action.py  # High-level click actions (template iteration, coordinate clicks, drags, resolution detection)
 │   │   └── click_behavior.py# Low-level ops (screenshot, match, click, window focus, client-area size)
-│   └── packs/               # Template-pack management (stdlib-only, runnable standalone)
-│       ├── language_switcher.py # Language/resolution switching (junction management)
-│       └── image_scaler.py  # Asset scaling (2K -> other resolutions)
+│   ├── packs/               # Template-pack management (stdlib-only, runnable standalone)
+│   │   ├── language_switcher.py # Language/resolution switching (junction management)
+│   │   └── image_scaler.py  # Asset scaling (2K -> other resolutions)
+│   └── update_check.py      # Version + update check (GitHub Releases, downgrade-proof, exe auto-update)
 ├── language/                # Template pack directory
 │   ├── EN/                  # English
 │   │   ├── EN_1280x720/     # 720p (generated by scaling)
