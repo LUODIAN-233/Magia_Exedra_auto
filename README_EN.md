@@ -17,10 +17,13 @@
 
 ## Features
 
-- **Link Raid:** enters backup requests, refreshes, searches for LV6-LV12 teams, clears finished battles, joins fights, and gives likes
-- **Crystalis:** clicks `play`, waits for results, and uses `retry` to repeat stages
+| Mode | Description |
+|:----:|:------------|
+| **Link Raid** | Enters backup requests, refreshes, searches for LV6-LV12 teams, clears finished battles, joins fights, and gives likes |
+| **Crystalis** | Clicks `play`, waits for results, and uses `retry` to repeat stages |
+
 - Both modes support a configurable stamina-potion count and stop when it is exhausted
-- Supports English/Japanese templates at 720p / 1080p / 2K / 4K
+- Supports English/Japanese templates at `720p` / `1080p` / `2K` / `4K`
 - Stops safely when a normal screen is not recognized within 60 seconds or a battle within 30 minutes
 - Checks the game window, resolution, and required templates before starting to avoid obvious misclicks
 - Supports stable/beta update checks; release builds can safely install validated update packages
@@ -29,7 +32,7 @@
 
 Download the complete ZIP from [GitHub Releases](https://github.com/LUODIAN-233/Magia_Exedra_auto/releases), extract it, and run `main.exe` at the root.
 
-> Do not copy only the EXE. The distribution also needs `_internal/`, `resource/`, `language/`, and `tools/` beside it.
+> **Do not copy only the EXE.** The distribution also needs `_internal/`, `resource/`, `language/`, and `tools/` beside it.
 
 ## Quick Start
 
@@ -47,14 +50,14 @@ Download the complete ZIP from [GitHub Releases](https://github.com/LUODIAN-233/
 3. Set the stamina-potion count.
 4. Click `启动：自动刷晶花，需要在play界面启动`.
 
-Click `停下当前运行的脚本` to request that the current task stop.
+> Click `停下当前运行的脚本` to request that the current task stop.
 
 ## Template Settings
 
-- Selecting a language and resolution switches automatically
+- Selecting a language and resolution switches **automatically**
 - The visible Chinese labels `英语` and `日语` correspond to `EN` and `JP`
 - `（空）` means that the template pack is currently unavailable
-- `刷新列表` generates 720p / 1080p / 4K templates from the original 2K pack
+- `刷新列表` generates `720p` / `1080p` / `4K` templates from the original 2K pack
 - The game language and window resolution should match the active template pack
 
 ## Before Use
@@ -62,15 +65,22 @@ Click `停下当前运行的脚本` to request that the current task stop.
 - Supports only windowed Windows x86-64 / AMD64 gameplay
 - The game must remain visible and its recognition area unobstructed
 - The bot activates the game window and uses the global mouse; do not operate the mouse at the same time
-- Coordinate scaling supports 720p / 1080p / 2K / 4K, but recognition still depends on DPI, window size, and template quality
+- Coordinate scaling supports `720p` / `1080p` / `2K` / `4K`, but recognition still depends on DPI, window size, and template quality
 - The JP server can switch to EN in-game and reuse the English templates
 - Not every mode/language/resolution combination has been fully tested in the live game; monitor a short run first
 
 ## Wiki
 
-Source setup, building, architecture, template maintenance, update security, and development conventions are documented in the Chinese Wiki:
+Source setup, building, architecture, template maintenance, update security, and development conventions are documented in the Wiki. The Wiki is now multilingual:
 
-- [Wiki Home](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki)
+| Language | Entry |
+|:--------:|:------|
+| 简体中文 | [Wiki 首页](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki) |
+| English | [Wiki Home (EN)](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/Home_EN) |
+| 日本語 | [Wiki ホーム](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/ホーム) |
+
+Chinese Wiki pages:
+
 - [Run from source and build](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/源码运行与构建)
 - [Architecture](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/项目架构)
 - [Template packs and resolutions](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/模板包与分辨率)
@@ -87,7 +97,7 @@ Source setup, building, architecture, template maintenance, update security, and
 
 ---
 
-This script is for learning and communication purposes only. Please comply with the game's terms of service. Users are responsible for consequences arising from its use.
+> This script is for learning and communication purposes only. Please comply with the game's terms of service. Users are responsible for consequences arising from its use.
 
 ## Translation Notice
 
