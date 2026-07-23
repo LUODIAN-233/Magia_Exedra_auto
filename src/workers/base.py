@@ -120,15 +120,33 @@ class BaseWorker(QThread):
 
     def _click_until(self, picture, name, timeout=RETRY_TIMEOUT, next_steps=()):
         #在 timeout 内反复尝试点击某组模板；超时则安全停止本线程并返回 1。
-        #恢复点击可能已代替目标点击推进流程，因此恢复后先检查下一步，再重试当前步骤。
+        #声明下一步时，正常点击或恢复点击后都必须先确认下一步出现，否则冗余点击当前步骤。
         #返回 2 表示点击成功，1 表示未点到（含超时停止）。
         deadline = time.monotonic() + timeout
         recovery_deadline = time.monotonic() + 5
         result = 1
+        waiting_for_next = False
         while self._running() and time.monotonic() < deadline:
+            if waiting_for_next:
+                for next_picture, next_name in next_steps:
+                    if click_action.find_item_with_result(self, next_picture, next_name) == 2:
+                        self.signal.emit(f'已检测到下一步{next_name}，确认{name}页面已经推进。')
+                        result = 2
+                        break
+                if result == 2:
+                    break
+
             result = click_action.click_item_with_result(self, picture, name)
             if result == 2:
-                break
+                if not next_steps:
+                    break
+                if waiting_for_next:
+                    self.signal.emit(f'下一步尚未出现，仍检测到{name}，已冗余点击当前步骤。')
+                else:
+                    self.signal.emit(f'{name}已点击，正在等待下一步页面出现。')
+                waiting_for_next = True
+                result = 1
+                recovery_deadline = time.monotonic() + 5
             if time.monotonic() >= recovery_deadline:
                 self.signal.emit(f'连续 5 秒未匹配到{name}，正在观察画面变化。')
                 dynamic = click_action.click_behavior.screen_changes_significantly(self)
@@ -138,17 +156,12 @@ class BaseWorker(QThread):
                     clicked = click_action.click_behavior.click_last_automation_position(self)
                     if clicked == 2:
                         self.signal.emit('画面较稳定，已在脚本上一次操作位置执行一次恢复点击。')
-                        for next_picture, next_name in next_steps:
-                            if click_action.find_item_with_result(self, next_picture, next_name) == 2:
-                                self.signal.emit(f'恢复点击后已检测到下一步{next_name}，当前{name}步骤已完成。')
-                                result = 2
-                                break
-                        if result != 2:
+                        waiting_for_next = bool(next_steps)
+                        if not next_steps:
                             result = click_action.click_item_with_result(self, picture, name)
                             if result == 2:
                                 self.signal.emit(f'恢复点击后仍检测到{name}，已冗余点击当前步骤。')
-                        if result == 2:
-                            break
+                                break
                     else:
                         self.signal.emit('画面较稳定，但没有可安全使用的上一次操作位置，未执行恢复点击。')
                 #当前周期无论点击、跳过或截图失败，都从现在开始等待下一个 5 秒周期。

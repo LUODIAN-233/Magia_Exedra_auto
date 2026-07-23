@@ -28,7 +28,7 @@
 - Stops safely when a normal screen is not recognized within 60 seconds or a battle within 30 minutes
 - Checks the game window, resolution, and required templates before starting to avoid obvious misclicks
 - Pauses on keyboard activity or large mouse movement and resumes after five seconds of user inactivity
-- While awaiting a clickable template, every five-second miss observes only the game client area for two seconds; over 50% changed game pixels skip that recovery click as likely battle animation, otherwise the bot clicks once at its last action position. It then checks whether a declared next step appeared and, if not, redundantly checks and clicks the current step before continuing the five-second cycle
+- While awaiting a clickable template, every five-second miss observes only the game client area for two seconds; over 50% changed game pixels skip that recovery click as likely battle animation, otherwise the bot clicks once at its last action position. For flows with declared next steps, either a normal click or a recovery click counts as successful only after the next step is recognized; if it has not appeared but the current step remains, the bot clicks the current step redundantly and continues the five-second cycle
 - The GUI can switch between `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` log levels at runtime
 - Supports stable/beta update checks; release builds can safely install validated update packages
 

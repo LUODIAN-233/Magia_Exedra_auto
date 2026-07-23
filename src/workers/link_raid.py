@@ -187,8 +187,7 @@ class LinkRaidWorker(BaseWorker):
         if self.join_full == 2:
             # 点击左边的 joined battle
             result = self._click_until(
-                './aim/quests/link_raid/backup_requests/joined_battles', 'joined_battles',
-                next_steps=(('./aim/quests/link_raid/joined_battles/win', 'win/lose'),),
+                './aim/quests/link_raid/backup_requests/joined_battles', 'joined_battles'
             )
             if result == 2:
                 self.signal.emit(str('joined_battles点击完成'))

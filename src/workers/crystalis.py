@@ -110,10 +110,7 @@ class CrystalisWorker(BaseWorker):
 
     def click_retry_or_recover_lp(self):
         result = 1
-        result = self._click_until(
-            './aim/crystalis/retry', 'retry',
-            next_steps=(('./aim/crystalis/ok', 'ok'),),
-        )
+        result = self._click_until('./aim/crystalis/retry', 'retry')
         if result == 2:
             self.signal.emit(str('retry点击完成'))
 

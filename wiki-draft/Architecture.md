@@ -65,7 +65,7 @@ Adding a mode requires a no-argument-constructible `BaseWorker` subclass decorat
 
 `BaseWorker(QThread)`, `retry_until()`, `RETRY_TIMEOUT=60`, and `BATTLE_TIMEOUT=1800`. Per-worker state is `_active` plus `_stop_event`; `start()` refuses restart while the old thread still runs.
 
-During every template wait, each continuous 5-second miss triggers a 2-second observation of the game client. If more than 50% of pixels change, the activity is treated as likely battle animation and only that recovery cycle is skipped. Otherwise, one recovery click is made at the last safe automation position. Afterward, explicitly declared next-step templates are checked first; if none is present, the current step is redundantly checked and clicked. The 5-second cycle then continues until success, timeout, or cancellation.
+During every template wait, each continuous 5-second miss triggers a 2-second observation of the game client. If more than 50% of pixels change, the activity is treated as likely battle animation and only that recovery cycle is skipped. Otherwise, one recovery click is made at the last safe automation position. For flows with explicitly declared next-step templates, either a normal click or a recovery click returns success only after one of those templates is recognized; while the current template remains, it is clicked redundantly. The 5-second cycle then continues until success, timeout, or cancellation.
 
 Each run starts a `UserActivityGuard`. Keyboard input or cumulative large mouse movement pauses template actions until the user has been idle for 5 seconds. Bot mouse input runs inside an automation guard and therefore does not count as user activity; successful automation input also updates the last safe position.
 
