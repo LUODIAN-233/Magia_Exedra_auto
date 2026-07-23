@@ -1,7 +1,7 @@
 <div align="center">
   <h1>Magia Exedra Auto Bot</h1>
-  <p>An image-recognition-based <strong>Magia Exedra</strong> Windows game automation script</p>
-  <p>Supports both Link Raid and Crystalis auto-farming modes, with language/resolution switching and automatic asset scaling</p>
+  <p>An image-recognition-based <strong>Magia Exedra</strong> automation tool for Windows</p>
+  <p>Supports Link Raid and Crystalis farming, English/Japanese templates, and multiple resolutions</p>
   <p>
     <img alt="Platform" src="https://img.shields.io/badge/Platform-Windows-blue">
     <img alt="Python" src="https://img.shields.io/badge/Python-3.x-blue">
@@ -15,204 +15,67 @@
 
 ---
 
-## Feature Overview
+## Features
 
-### Link Raid Auto-farming
+- **Link Raid:** enters backup requests, refreshes, searches for LV6-LV12 teams, clears finished battles, joins fights, and gives likes
+- **Crystalis:** clicks `play`, waits for results, and uses `retry` to repeat stages
+- Both modes support a configurable stamina-potion count and stop when it is exhausted
+- Supports English/Japanese templates at 720p / 1080p / 2K / 4K
+- Stops safely when a normal screen is not recognized within 60 seconds or a battle within 30 minutes
+- Checks the game window, resolution, and required templates before starting to avoid obvious misclicks
+- Supports stable/beta update checks; release builds can safely install validated update packages
 
-> Starting screen: the game's main screen (Lighthouse screen)
+## Download
 
-- Automatically enters the `backup_requests` screen, refreshes and searches for teams of the specified level
-- Automatically scrolls down the list when the target level is not found, up to 4 times
-- Automatically clears finished battles (joined battles)
-- Automatically gives a "like" after a battle ends
-- Configurable stamina-potion usage count (**0 ~ 10 times**)
-- Supports LV6 ~ LV12 level selection
+Download the complete ZIP from [GitHub Releases](https://github.com/LUODIAN-233/Magia_Exedra_auto/releases), extract it, and run `main.exe` at the root.
 
-### Crystalis Auto-farming
+> Do not copy only the EXE. The distribution also needs `_internal/`, `resource/`, `language/`, and `tools/` beside it.
 
-> Starting screen: the team-select screen (the screen where clicking `play` enters battle)
+## Quick Start
 
-- Automatically repeats stages; clicks `retry` after each battle to continue
-- Configurable stamina-potion usage count (**0 ~ 8 times**)
-- Automatically stops when stamina is exhausted and potions are used up
+### Link Raid
 
-### General Features
+1. Leave the game on the main/Lighthouse screen.
+2. Under `选择挂机脚本`, select `link raid挂机启动`.
+3. Set the level and stamina-potion count.
+4. Click `启动：link raid挂机启动`.
 
-- Brings the game window to the foreground on startup
-- Before starting, detects the game window's client-area resolution and compares it with the selected template pack using a tolerant margin (accommodates small drift from title bar / borders / DPI scaling); refuses to start when consistency cannot be confirmed, preventing hard-coded coordinate misclicks
-- Stop button can interrupt any farming task at any time
-- The two farming modes are mutually exclusive; template switching and refresh are disabled while a task is running
-- Select a farming script from a dropdown; only that script's parameters are shown, so new modes do not keep extending the window vertically
-- Automatically checks for updates via GitHub Releases on startup; the `检查更新` button also allows manual checks. Only strictly newer versions are flagged (downgrade-proof). The packaged exe auto-installs only a unique, strictly named ZIP with a GitHub SHA-256 digest, after safe extraction and file validation; a manual source-mode check can open the Release page
-- Automatically stops safely if a normal screen is not recognized within 60 seconds or a battle within 30 minutes
-- Recognition captures only the game window; missing windows or invalid templates are reported instead of crashing
-- Language / resolution switching (supports English, Japanese; multi-resolution assets auto-scaled)
-- One-click scaling of 2K (2560×1440) source assets to 720p / 1080p / 4K
+### Crystalis
 
----
+1. Select the stage and team, then remain on the screen where clicking `play` starts battle.
+2. Under `选择挂机脚本`, select `自动刷晶花，需要在play界面启动`.
+3. Set the stamina-potion count.
+4. Click `启动：自动刷晶花，需要在play界面启动`.
 
-## How It Works
+Click `停下当前运行的脚本` to request that the current task stop.
 
-| Module | Technical approach |
-|:-----:|:---------|
-| Image recognition | OpenCV `TM_SQDIFF_NORMED`, match threshold `0.8` |
-| Click actions | PyAutoGUI (move-then-click, otherwise the game rejects the input) |
-| Window management | pywinctl (find window by title `MadokaExedra`, read client-area resolution) |
-| GUI | PySide6 |
-| Asset scaling | ImageMagick (`tools/ImageMagick/magick.exe`) |
-| Template switching | Windows directory junction; `aim/` points to the real pack under `language/` |
+## Template Settings
 
-### Workflow
+- Selecting a language and resolution switches automatically
+- The visible Chinese labels `英语` and `日语` correspond to `EN` and `JP`
+- `（空）` means that the template pack is currently unavailable
+- `刷新列表` generates 720p / 1080p / 4K templates from the original 2K pack
+- The game language and window resolution should match the active template pack
 
-```
-main.py (GUI entry; only starts/stops workers and passes params)
-    │
-    ├── workers/LinkRaidWorker ──► click_action ──► click_behavior ──► Game
-    │   (Link Raid)               (template iter + coords) (match + click + window)
-    │
-    ├── workers/CrystalisWorker ──► click_action ──► click_behavior ──► Game
-    │   (Crystalis)
-    │
-    └── LanguageSwitcherWidget
-          ├── language_switcher (junction management)
-          └── image_scaler (2K -> other resolutions)
-```
+## Before Use
 
----
+- Supports only windowed Windows x86-64 / AMD64 gameplay
+- The game must remain visible and its recognition area unobstructed
+- The bot activates the game window and uses the global mouse; do not operate the mouse at the same time
+- Coordinate scaling supports 720p / 1080p / 2K / 4K, but recognition still depends on DPI, window size, and template quality
+- The JP server can switch to EN in-game and reuse the English templates
+- Not every mode/language/resolution combination has been fully tested in the live game; monitor a short run first
 
-## Requirements
+## Wiki
 
-| Item | Requirement |
-|:----:|:-----|
-| OS | Windows |
-| Game | Magia Exedra, window title `MadokaExedra`, running in **16:9** windowed mode |
-| Python | 3.x |
+Source setup, building, architecture, template maintenance, update security, and development conventions are documented in the Chinese Wiki:
 
----
-
-## Usage
-
-### Option 1: Use a release build (recommended)
-
-Download a release, extract it, and run the corresponding EXE (all dependencies are bundled).
-
-### Option 2: Run from source / build it yourself
-
-```bash
-# Install dependencies (the project has no requirements.txt; install manually)
-pip install pyautogui PySide6 opencv-python pywinctl Pillow
-
-# Run
-python main.py
-
-# Build an exe
-pyinstaller -D -i resource/main.ico main.py
-```
-
----
-
-## Operating Instructions
-
-### 1. Link Raid farming
-
-Must be started on the game's main screen (Lighthouse screen)
-
-- Select `link raid挂机启动` from the script dropdown
-- Select the level to farm (LV6 ~ LV12)
-- Set the stamina-potion drink count (0 ~ 10)
-- Click "**启动：link raid挂机启动**" (start the selected Link Raid script)
-
-### 2. Crystalis farming
-
-Must be started on the team-select screen (the screen where clicking `play` enters battle)
-
-- Select `自动刷晶花，需要在play界面启动` from the script dropdown
-- Set the stamina-potion drink count (0 ~ 8)
-- Click "**启动：自动刷晶花，需要在play界面启动**" (start the selected Crystalis script)
-
-### 3. Language / resolution switching
-
-- After selecting a language and resolution in the dropdown, it **switches automatically** — no extra confirm button
-- The language dropdown shows Chinese names (English / Japanese), while the item data holds the real code
-- Empty template packs are shown as "（空）" and switching is rejected
-
-### 4. Refresh list
-
-Automatically scales the 2K (2560×1440) source assets to other resolutions:
-
-| Source resolution | → Target | Scale |
-|:--------:|:----------:|:----:|
-| 2560×1440 | 1280×720 | 0.5x (downscale) |
-| 2560×1440 | 1920×1080 | 0.75x (downscale) |
-| 2560×1440 | 3840×2160 | 1.5x (upscale) |
-
-> 720p / 1080p are downscaled and of good quality; 4K is upscaled (non-integer resampling) and slightly softer.
-> A target is generated when missing or when its 2K source content changes. Derived templates removed from the source pack are cleaned automatically. The list refreshes after scaling.
-
-### 5. Check for updates
-
-- The bot checks for updates once on startup in the background; you can also click `检查更新` at any time to trigger it manually
-- It queries GitHub Releases for the latest version and only flags an update when the remote version is strictly greater than the local one (downgrade-proof)
-- The check runs in a background thread and never blocks the UI; network failures or "no update" are simply reported in the log
-- By default only stable releases are considered; tick "更新至 beta 版" to also include pre-release (beta) versions. Pre-release versions are compared per semver (release > same-version pre-release), downgrade-proof
-- In the packaged exe, automatic installation is offered only when the Release has one strictly named ZIP with a GitHub SHA-256 digest. Download cancellation is real, and size, SHA-256, ZIP paths, extracted size, and `main.exe` are validated
-- Before installation, the bot safely stops and waits for automation, scaling, and update threads. The installer checks copy results and file hashes; on failure it restores overwritten files and does not restart. A manual source-mode check opens the Release page
-
----
-
-## Notes
-
-> **Testing status:** The latest changes to thread stopping, wait timeouts, game-window capture, incremental template scaling, and game-window resolution detection have only passed syntax, import, and static diff checks. They have not yet undergone extended end-to-end testing against the live game. Monitor a short run before leaving the bot unattended.
-
-- The **game window must be in the foreground and unobstructed**; the bot window itself can remain in the background
-- The first click of Link Raid uses **hardcoded coordinates** (`2000,1000` → `2400,1200`, 2K baseline); they auto-scale to the active resolution, so 720p / 1080p / 2K / 4K all work
-- The game must run in **16:9** windowed mode, and the template's language and resolution must match the game
-- Before starting a mode, required `_1.png` templates, PNG headers, and numbering continuity are checked. A cross-process template lease is held while automation runs, so another instance cannot switch or rewrite templates in the same installation
-- The JP server can be switched to EN in-game to reuse the English templates without re-capturing screenshots
-
----
-
-## Project Structure
-
-```
-Magia_Exedra_auto/
-├── main.py                  # GUI entry: selects scripts, switches parameter pages, starts/stops workers, and passes params
-├── src/                     # Source package
-│   ├── workers/             # automation run-logic package (decoupled from the GUI)
-│   │   ├── registry.py      # Registry: workers self-describe params via @register, GUI auto-generates widgets
-│   │   ├── base.py          # worker base class (run/stop state, retry and timeout stop)
-│   │   ├── link_raid.py     # Link Raid farming flow
-│   │   └── crystalis.py     # Crystalis farming flow
-│   ├── click/               # Click module package
-│   │   ├── click_action.py  # High-level click actions (template iteration, coordinate clicks, drags, resolution detection)
-│   │   └── click_behavior.py# Low-level ops (screenshot, match, click, window focus, client-area size)
-│   ├── packs/               # Template-pack management (stdlib-only, runnable standalone)
-│   │   ├── language_switcher.py # Language/resolution switching (junction management)
-│   │   └── image_scaler.py  # Asset scaling (2K -> other resolutions)
-│   └── update_check.py      # Version + update check (GitHub Releases, downgrade-proof, exe auto-update)
-├── language/                # Template pack directory
-│   ├── EN/                  # English
-│   │   ├── EN_1280x720/     # 720p (generated by scaling)
-│   │   ├── EN_1920x1080/    # 1080p (generated by scaling)
-│   │   ├── EN_2560x1440/    # 2K source assets
-│   │   └── EN_3840x2160/    # 4K (generated by scaling)
-│   └── JP/                  # Japanese
-│       └── ...
-├── aim/                     # Runtime junction, points to the currently used template pack
-├── resource/
-│   └── main.ico             # Program icon
-├── tools/
-│   └── ImageMagick/         # Portable ImageMagick (used for asset scaling)
-└── AGENTS.md                # Project notes for AI assistants (development reference)
-```
-
-### Core Conventions
-
-- **Return value convention**: `2` = success / found / clicked; `1` = not found / keep trying. Not booleans.
-- **Template numbering**: `click_item_with_result` tries `<name>_1.png`, `<name>_2.png`... incrementing until a file does not exist; to add a variant, just drop in the next-numbered image.
-- **Run/stop state**: each worker thread keeps its own `_active` (whether it is running) and `_stop_event` (the GUI stop event); the global `guaji` flags are gone. `stop()` is safe to call on a not-yet-started or already-finished thread, and one thread object can be restarted repeatedly.
-
----
+- [Wiki Home](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki)
+- [Run from source and build](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/源码运行与构建)
+- [Architecture](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/项目架构)
+- [Template packs and resolutions](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/模板包与分辨率)
+- [Automatic updates and releases](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/自动更新与发布)
+- [Development conventions](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/开发约定)
 
 ## Acknowledgments
 
@@ -224,14 +87,8 @@ Magia_Exedra_auto/
 
 ---
 
-## Supplementary Notes
-
-This script **cannot run on a mobile phone** (it cannot be controlled via ADB). The game refuses to run when it detects an ADB connection, and the anti-cheat mechanism restricts keyboard-input scripts. The PC approach based on window image recognition is currently the lowest-barrier compromise.
-
-> This script is for learning and communication purposes only. Please comply with the game's terms of service. We are not responsible for any consequences arising from the use of this script.
-
----
+This script is for learning and communication purposes only. Please comply with the game's terms of service. Users are responsible for consequences arising from its use.
 
 ## Translation Notice
 
-This page was translated by AI and may contain ambiguities or inaccuracies. For authoritative content, please refer to the original [简体中文 README](./README.md).
+This page was translated by AI and may contain ambiguities or inaccuracies. For authoritative content, refer to the original [简体中文 README](./README.md).
