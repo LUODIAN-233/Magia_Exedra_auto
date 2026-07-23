@@ -1,6 +1,7 @@
 import time
 import logging
 from pathlib import Path
+from contextlib import nullcontext
 
 import pyautogui
 
@@ -8,6 +9,28 @@ from . import click_behavior
 from src.packs import language_switcher, image_scaler
 
 logger = logging.getLogger(__name__)
+
+
+def _worker_from_callback(callback):
+    return getattr(callback, '__self__', None)
+
+
+def _wait_for_user(callback):
+    worker = _worker_from_callback(callback)
+    wait = getattr(worker, '_wait_for_user_idle', None)
+    return wait is None or wait()
+
+
+def _automation_input(callback):
+    worker = _worker_from_callback(callback)
+    guard = getattr(worker, '_automation_input', None)
+    return guard() if guard is not None else nullcontext()
+
+
+def _record_automation_position(callback, position):
+    worker = _worker_from_callback(callback)
+    if worker is not None:
+        worker._last_automation_position = position
 
 
 def _wait(self, seconds):
@@ -18,85 +41,58 @@ def _wait(self, seconds):
     return False
 
 
+def _template_files(picture):
+    files = []
+    index = 1
+    while True:
+        path = Path(f'{picture}_{index}.png')
+        if not path.exists():
+            return files
+        files.append(path)
+        index += 1
+
+
 #尝试点击一次，查询组内所有图片，返回点击结果return
 def click_item_with_result(self, picture, name):
-    check = 1  # 这个是判断要不要继续循环
-    click_time = 1  # 尝试点击一次这玩意+1
-    click_file = ''
-
-
-    click_file = (f'{picture}_{click_time}.png')
-    file_exist = Path(click_file)
-
-    while (check == 1 and file_exist.exists()):
-        click_file = (f'{picture}_{click_time}.png')
-        click_time = click_time + 1
-
-        file_exist=Path(click_file)
-        logger.debug('文件状态是%s', file_exist)
-
-        if file_exist.exists():
-            can_click = getattr(self, '_running', None)
-            if can_click is not None and not can_click():
-                return 1
-            check = click_behavior.routine(click_file, name, can_click)
-            logger.debug('点击%s，点击返回值是%s，成功点击是2，不点击是1', click_file, check)
-            if _wait(self, 0.4):
-                return 1
-        else:
-            logger.debug('文件耗尽')
-
-    if (check == 1):
-        click_time = click_time - 1
-        logger.debug('尝试了%s次数，没有找到%s，当前点击事件执行结束', click_time-1, name)
-        return check
-
-    if (check == 2):
-        logger.debug('点击%s事件完成，当前点击事件执行结束', name)
-        if _wait(self, 0.5):
+    files = _template_files(picture)
+    can_click = getattr(self, '_running', None)
+    if can_click is not None and not can_click():
+        return 1
+    if not files or not _wait_for_user(can_click):
+        return 1
+    avg, score, path = click_behavior.best_template_match(files)
+    if avg is None or score <= click_behavior.MATCH_THRESHOLD:
+        logger.debug('比较了%s个模板，没有找到%s；最高匹配率 %.4f', len(files), name, score)
+        if _wait(self, 0.4):
             return 1
-        return check
+        return 1
+    logger.debug('点击%s的最高匹配模板%s，匹配率 %.4f', name, path, score)
+    result = click_behavior.click_auto(avg, can_click)
+    if result == 2 and _wait(self, 0.5):
+        return 1
+    return result
 
 
 
 #尝试寻找目标一次，查询组内所有图片，返回寻找结果return
 def find_item_with_result(self, picture, name):
-    check = 1  # 这个是判断要不要继续循环
-    click_time = 1  # 尝试点击一次这玩意+1
-    click_file = ''
-
-    click_file = (f'{picture}_{click_time}.png')
-    file_exist = Path(click_file)
-
-    while (check == 1 and file_exist.exists()):
-        click_file = (f'{picture}_{click_time}.png')
-        click_time = click_time + 1
-
-        file_exist = Path(click_file)
-        logger.debug('文件状态是%s', file_exist)
-        if file_exist.exists():
-            can_find = getattr(self, '_running', None)
-            if can_find is not None and not can_find():
-                return 1
-            check = click_behavior.routine_only_find(click_file, name, can_find)
-            logger.debug('寻找%s，寻找返回值是%s，成功寻找是2，没找到是1', click_file, check)
-            if _wait(self, 0.4):
-                return 1
-        else:
-            logger.debug('文件耗尽')
-
-    if (check == 1):
-        click_time = click_time - 1
-        logger.debug('尝试了%s次数，没有找到%s，当前寻找事件执行结束', click_time-1, name)
-        return check
-    if (check == 2):
-        logger.debug('寻找%s事件完成，找到了，当前寻找事件执行结束', name)
-        if _wait(self, 0.5):
-            return 1
-        return check
+    files = _template_files(picture)
+    can_find = getattr(self, '_running', None)
+    if can_find is not None and not can_find():
+        return 1
+    if not files or not _wait_for_user(can_find):
+        return 1
+    _avg, score, path = click_behavior.best_template_match(files)
+    found = score > click_behavior.MATCH_THRESHOLD
+    logger.debug('寻找%s的最高匹配模板%s，匹配率 %.4f，结果%s', name, path, score, 2 if found else 1)
+    if _wait(self, 0.5 if found else 0.4):
+        return 1
+    return 2 if found else 1
 
 #用于点击特定位置，输入坐标，第一个为窗口左到右的偏移，第二个上到下，注意上到下会有一个窗体厚度，不同缩放倍率会不同！
 def click_position(move_lelt, move_top, can_click=None):
+    if not _wait_for_user(can_click):
+        return 1
     # 把游戏窗口弄出来
     window = click_behavior.find_win('MadokaExedra')
     if window is None:
@@ -109,11 +105,13 @@ def click_position(move_lelt, move_top, can_click=None):
         time.sleep(0.1)
         if can_click is not None and not can_click():
             return 1
-        pyautogui.moveTo(left + move_lelt, top + move_top)
-        time.sleep(0.1)
-        if can_click is not None and not can_click():
-            return 1
-        pyautogui.click(left + move_lelt, top + move_top, button='left')
+        with _automation_input(can_click):
+            pyautogui.moveTo(left + move_lelt, top + move_top)
+            time.sleep(0.1)
+            if can_click is not None and not can_click():
+                return 1
+            pyautogui.click(left + move_lelt, top + move_top, button='left')
+            _record_automation_position(can_click, (left + move_lelt, top + move_top))
         time.sleep(0.1)
     except Exception as e:
         logger.warning('坐标点击失败: %s', e)
@@ -121,6 +119,8 @@ def click_position(move_lelt, move_top, can_click=None):
     return 2
 
 def move_a_to_b(move_lelt_a, move_top_a, move_lelt_b, move_top_b, can_move=None):
+    if not _wait_for_user(can_move):
+        return 1
     window = click_behavior.find_win('MadokaExedra')
     if window is None:
         return 1
@@ -133,11 +133,13 @@ def move_a_to_b(move_lelt_a, move_top_a, move_lelt_b, move_top_b, can_move=None)
         time.sleep(0.1)
         if can_move is not None and not can_move():
             return 1
-        pyautogui.moveTo(left + move_lelt_a, top + move_top_a)
-        time.sleep(0.1)
-        if can_move is not None and not can_move():
-            return 1
-        pyautogui.dragTo(left + move_lelt_b, top + move_top_b, duration=2, button='left')
+        with _automation_input(can_move):
+            pyautogui.moveTo(left + move_lelt_a, top + move_top_a)
+            time.sleep(0.1)
+            if can_move is not None and not can_move():
+                return 1
+            pyautogui.dragTo(left + move_lelt_b, top + move_top_b, duration=2, button='left')
+            _record_automation_position(can_move, (left + move_lelt_b, top + move_top_b))
         time.sleep(0.1)
     except Exception as e:
         logger.warning('坐标拖拽失败: %s', e)

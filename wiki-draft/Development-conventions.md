@@ -12,8 +12,9 @@ Language: [简体中文](./首页) · [English](./Home_EN) · [日本語](./ホ�
 ## Key return-value conventions
 
 - **Template-action return values are `2`/`1`, not booleans.** `2` means success/found/clicked; `1` means not found/keep trying/cancelled. `find_win()` is the exception: it returns a geometry tuple or `None`
-- **Template filenames use the `picture` argument, not `name`.** `click_item_with_result(self, picture, name)` and `find_item_with_result(...)` try `<picture>_1.png`, `<picture>_2.png`, and so on until the first missing number. `name` is only a log label. Numbering must start at `_1` and remain contiguous
-- Match threshold is strictly `> 0.8` in `click_behavior.routine()` and `routine_only_find()`
+- **Template filenames use the `picture` argument, not `name`.** Starting at `<picture>_1.png`, `click_item_with_result(self, picture, name)` and `find_item_with_result(...)` discover consecutive variants until the first missing number. `name` is only a log label. Numbering must start at `_1` and remain contiguous
+- Every variant in a template group must be compared against the same captured frame, and only the globally highest-scoring candidate in the group may be acted on; do not recapture per template or return early in discovery order
+- Apply the same 3x3 `GaussianBlur` to the screenshot and templates before `TM_SQDIFF_NORMED`; the match score must be strictly `> 0.8`, and exactly `0.8` is not a match
 
 ## Run/stop state
 
@@ -29,14 +30,16 @@ Language: [简体中文](./首页) · [English](./Home_EN) · [日本語](./ホ�
 ## Logging
 
 - Use `logging.getLogger(__name__)` for runtime debug output, not `print()`
-- The console defaults to WARNING and the file to DEBUG under `logs/`; the `MAGIA_LOG_LEVEL` environment variable overrides the console level
-- Worker user-facing status messages still go through `signal.emit` (the GUI log box); do not replace them with `logging`
+- The GUI logging handler provides a runtime DEBUG/INFO/WARNING/ERROR/CRITICAL level selector; the file handler always writes DEBUG-level logs under `logs/`
+- When a console exists it defaults to WARNING, and `MAGIA_LOG_LEVEL` can override that level. A `--windowed` build has no console, so missing stderr must be skipped safely without affecting GUI startup
+- Worker user-facing status messages still go through `signal.emit` (the GUI log box). They are not filtered by GUI or console logging levels and must not be replaced with `logging`
 - `if __name__ == "__main__"` diagnostic blocks may keep `print`; that is CLI direct output, not runtime noise
 
 ## GUI parameters
 
 - GUI parameters are registry-driven; there are no module-level parameter globals
 - `ParamSpec.kind` supports `choice`, `lp_recover`, and `int`
+- `required_templates` paths may contain placeholders such as `{level_choice}`, but each placeholder name must match a declared `ParamSpec.key` for that worker
 - To add a new control type, add a `kind` in `registry.py` and a corresponding branch in `main.py`'s `_build_param_widget`
 
 ## Adding a new farming mode
@@ -47,6 +50,13 @@ Language: [简体中文](./首页) · [English](./Home_EN) · [日本語](./ホ�
 4. The `main.py` GUI will automatically show the corresponding button and parameter controls; no GUI code changes needed
 
 The worker must be no-argument-constructible and must route `run()` through `_run_safely()`.
+
+## User-input protection and wait recovery
+
+- Keyboard input or cumulative large mouse movement pauses automation; it resumes only after five continuous seconds of user inactivity
+- Every new PyAutoGUI input path must call `_wait_for_user_idle()` first, perform automated mouse actions inside an `_automation_input()` context, and record the last automation position after success
+- During a single click-template wait, every continuous five-second miss must trigger a two-second observation of the game client area. If more than 50% of pixels change, treat it as battle animation and skip only that recovery cycle; otherwise perform one recovery click at the last safe automation position
+- This five-second recovery cycle must continue until the template succeeds, the wait times out, or the task is cancelled. It must never be implemented as a one-time check
 
 ## DPI-sensitive import order
 

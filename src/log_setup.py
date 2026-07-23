@@ -56,10 +56,12 @@ def configure_logging(console_level=logging.WARNING, file_level=logging.DEBUG,
         "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
         datefmt="%H:%M:%S",
     )
-    console = logging.StreamHandler()
-    console.setLevel(_resolve_console_level(console_level))
-    console.setFormatter(fmt)
-    root.addHandler(console)
+    console = None
+    if sys.stderr is not None:
+        console = logging.StreamHandler()
+        console.setLevel(_resolve_console_level(console_level))
+        console.setFormatter(fmt)
+        root.addHandler(console)
     if enable_file:
         try:
             os.makedirs(_log_dir(), exist_ok=True)
@@ -74,7 +76,8 @@ def configure_logging(console_level=logging.WARNING, file_level=logging.DEBUG,
             root.addHandler(file_h)
         except OSError:
             #日志目录不可写时退化为仅控制台，不阻塞启动
-            console.setLevel(min(console.level, logging.INFO))
+            if console is not None:
+                console.setLevel(min(console.level, logging.INFO))
     return root
 
 

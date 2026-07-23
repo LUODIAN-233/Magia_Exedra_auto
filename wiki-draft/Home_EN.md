@@ -18,10 +18,12 @@ Language: [简体中文](./首页) · [English](./Home_EN) · [日本語](./ホ�
 
 This tool recognizes game scenes via OpenCV `TM_SQDIFF_NORMED` template matching, performs clicks with PyAutoGUI, and provides a GUI built with PySide6. Two farming modes are supported:
 
-- **Link Raid**: enters backup requests, refreshes, searches for LV6-LV12 teams, clears finished battles, joins fights, and gives likes
+- **Link Raid**: enters backup requests, refreshes, searches for the selected LV4 or LV6-LV12 team, clears finished battles, joins fights, and gives likes; if the selected level is missing or cannot be clicked, it refreshes and retries without joining another level
 - **Crystalis**: clicks `play`, waits for results, and repeats stages via `retry`
 
 Both modes support a configurable stamina-potion count and support English/Japanese templates at `720p` / `1080p` / `2K` / `4K`.
+
+Automation pauses when the user operates the keyboard or mouse and resumes after five seconds of inactivity. Every template candidate in a group is compared against the same frame, and only the highest-scoring candidate is acted on; while waiting for a template, recovery checks continue every five seconds.
 
 ## Quick Navigation
 

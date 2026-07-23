@@ -19,13 +19,17 @@
 
 | Mode | Description |
 |:----:|:------------|
-| **Link Raid** | Enters backup requests, refreshes, searches for LV6-LV12 teams, clears finished battles, joins fights, and gives likes |
+| **Link Raid** | Enters backup requests, refreshes, searches for LV4 or LV6-LV12 teams, clears finished battles, joins fights, and gives likes |
 | **Crystalis** | Clicks `play`, waits for results, and uses `retry` to repeat stages |
 
 - Both modes support a configurable stamina-potion count and stop when it is exhausted
 - Supports English/Japanese templates at `720p` / `1080p` / `2K` / `4K`
+- Compares every numbered variant in a template group against the same frame and clicks only the highest-scoring candidate in the game window
 - Stops safely when a normal screen is not recognized within 60 seconds or a battle within 30 minutes
 - Checks the game window, resolution, and required templates before starting to avoid obvious misclicks
+- Pauses on keyboard activity or large mouse movement and resumes after five seconds of user inactivity
+- While awaiting a clickable template, every five-second miss observes only the game client area for two seconds; over 50% changed game pixels skip that recovery click as likely battle animation, otherwise the bot clicks once at its last action position. It then checks whether a declared next step appeared and, if not, redundantly checks and clicks the current step before continuing the five-second cycle
+- The GUI can switch between `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` log levels at runtime
 - Supports stable/beta update checks; release builds can safely install validated update packages
 
 ## Download
@@ -54,6 +58,10 @@ See [Wiki · Run from source and build](https://github.com/LUODIAN-233/Magia_Exe
 3. Set the level and stamina-potion count.
 4. Click `启动：link raid挂机启动`.
 
+> If the selected LV4 or LV6-LV12 battle is unavailable, the bot refreshes the backup-request list and searches again instead of joining another level.
+>
+> During normal results or finished-battle cleanup, the bot checks for and gives available likes only after successfully clicking `tap_to_countinue`; clicking `joined_battles` itself does not trigger likes.
+
 ### Crystalis
 
 1. Select the stage and team, then remain on the screen where clicking `play` starts battle.
@@ -69,16 +77,18 @@ See [Wiki · Run from source and build](https://github.com/LUODIAN-233/Magia_Exe
 - The visible Chinese labels `英语` and `日语` correspond to `EN` and `JP`
 - `（空）` means that the template pack is currently unavailable
 - `刷新列表` generates `720p` / `1080p` / `4K` templates from the original 2K pack
+- Derived templates use interpolation suited to real-time game scaling; after upgrading, click `刷新列表` once to rebuild existing derived packs
 - The game language and window resolution should match the active template pack
 
 ## Before Use
 
 - Supports only windowed Windows x86-64 / AMD64 gameplay
 - The game must remain visible and its recognition area unobstructed
-- The bot activates the game window and uses the global mouse; do not operate the mouse at the same time
+- The bot activates the game window and uses the global mouse; keyboard or large mouse activity pauses it, but an individual mouse action already in progress cannot be interrupted midway
 - Coordinate scaling supports `720p` / `1080p` / `2K` / `4K`, but recognition still depends on DPI, window size, and template quality
 - The JP server can switch to EN in-game and reuse the English templates
-- Runtime logs are written to a rotating file under the `logs/` folder beside the program for troubleshooting; set `MAGIA_LOG_LEVEL=DEBUG` to surface all log output on the console
+- Runtime logs are written to rotating files under `logs`; use `GUI 日志等级` for GUI debug logs, or `MAGIA_LOG_LEVEL=DEBUG` to control the console when running from source
+- Release builds run without a console window; use the GUI log panel or files under `logs/` for troubleshooting
 
 ## Wiki
 

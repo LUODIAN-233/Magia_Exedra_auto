@@ -6,8 +6,165 @@ import numpy as np
 import pyautogui
 
 import pywinctl as pwc
+from contextlib import nullcontext
 
 logger = logging.getLogger(__name__)
+MATCH_THRESHOLD = 0.8
+
+
+def _worker_from_callback(callback):
+    return getattr(callback, '__self__', None)
+
+
+def _wait_for_user(callback):
+    worker = _worker_from_callback(callback)
+    wait = getattr(worker, '_wait_for_user_idle', None)
+    return wait is None or wait()
+
+
+def _automation_input(callback):
+    worker = _worker_from_callback(callback)
+    guard = getattr(worker, '_automation_input', None)
+    return guard() if guard is not None else nullcontext()
+
+
+def _record_automation_position(callback, position):
+    worker = _worker_from_callback(callback)
+    if worker is not None:
+        worker._last_automation_position = position
+
+
+def _capture_region(region):
+    try:
+        screenshot = pyautogui.screenshot(region=region)
+        image = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+        return cv2.resize(image, (320, 180), interpolation=cv2.INTER_AREA)
+    except Exception as e:
+        logger.warning('游戏窗口截图失败: %s', e)
+        return None
+
+
+def frame_change_ratio(first, second, pixel_delta=25):
+    if first is None or second is None or first.shape != second.shape:
+        return None
+    difference = cv2.absdiff(first, second)
+    changed = np.max(difference, axis=2) >= pixel_delta
+    return float(np.count_nonzero(changed)) / changed.size
+
+
+def screen_changes_significantly(worker, duration=2, change_threshold=0.5):
+    """只观察可见游戏客户区；返回 True/False，截图或取消失败返回 None。"""
+    can_continue = getattr(worker, '_running', None)
+    if can_continue is not None and not can_continue():
+        return None
+    if not _wait_for_user(can_continue):
+        return None
+    if find_win('MadokaExedra') is None:
+        return None
+    client_region = get_client_region('MadokaExedra')
+    if client_region is None:
+        return None
+
+    first = _capture_region(client_region)
+    if first is None:
+        return None
+    deadline = time.monotonic() + duration
+    while time.monotonic() < deadline:
+        wait_time = min(0.25, max(0, deadline - time.monotonic()))
+        wait = getattr(worker, '_wait', None)
+        if wait is not None and wait(wait_time):
+            return None
+        if can_continue is not None and not can_continue():
+            return None
+        current = _capture_region(client_region)
+        ratio = frame_change_ratio(first, current)
+        if ratio is None:
+            return None
+        if ratio > change_threshold:
+            logger.debug('画面变化比例 %.2f，判定为动态画面', ratio)
+            return True
+    return False
+
+
+def click_last_automation_position(worker):
+    can_click = getattr(worker, '_running', None)
+    if can_click is not None and not can_click():
+        return 1
+    if not _wait_for_user(can_click):
+        return 1
+    position = getattr(worker, '_last_automation_position', None)
+    if position is None:
+        logger.debug('没有上一次自动化位置，跳过恢复点击')
+        return 1
+    window = find_win('MadokaExedra')
+    if window is None:
+        return 1
+    left, top, width, height = window
+    if not (left <= position[0] < left + width and top <= position[1] < top + height):
+        logger.warning('上一次自动化位置已不在游戏窗口内，跳过恢复点击: %s', position)
+        return 1
+    return click_auto(position, can_click)
+
+
+def _capture_game_window():
+    window = find_win('MadokaExedra')
+    if window is None:
+        return None, None
+    left, top, width, height = window
+    try:
+        screenshot = pyautogui.screenshot(region=window)
+        return cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR), (left, top)
+    except Exception as e:
+        logger.warning('游戏窗口截图失败: %s', e)
+        return None, None
+
+
+def _match_one(match_screen, template):
+    height, width = template.shape[:2]
+    if height > match_screen.shape[0] or width > match_screen.shape[1]:
+        return None
+    # 模板也采用相同平滑，削弱不同缩放器产生的单像素插值和锐化噪声。
+    match_template = cv2.GaussianBlur(template, (3, 3), 0)
+    try:
+        result = cv2.matchTemplate(match_screen, match_template, cv2.TM_SQDIFF_NORMED)
+        min_val, _max_val, min_loc, _max_loc = cv2.minMaxLoc(result)
+    except cv2.error as e:
+        logger.warning('模板匹配失败: %s', e)
+        return None
+    score = 1 - math.sqrt(max(0.0, min(1.0, min_val)))
+    return min_loc, (width, height), score
+
+
+def best_template_match(template_paths):
+    """在同一帧中比较整组模板，返回全局最高分的 (坐标, 分数, 路径)。"""
+    screen, origin = _capture_game_window()
+    if screen is None:
+        return None, 0.0, None
+    # 整组候选共享同一张截图和预处理结果，保证分数可比并避免重复处理全窗口。
+    match_screen = cv2.GaussianBlur(screen, (3, 3), 0)
+    best = None
+    for path in template_paths:
+        template = cv2.imread(str(path))
+        if template is None:
+            logger.warning('模板图片读取失败: %s', path)
+            continue
+        matched = _match_one(match_screen, template)
+        if matched is None:
+            logger.warning('模板尺寸大于游戏窗口或无法匹配: %s', path)
+            continue
+        location, size, score = matched
+        logger.debug('候选模板 %s 匹配率: %.4f', path, score)
+        if best is None or score > best[0]:
+            best = score, location, size, str(path)
+    if best is None:
+        return None, 0.0, None
+    score, location, size, path = best
+    avg = (
+        origin[0] + location[0] + size[0] // 2,
+        origin[1] + location[1] + size[1] // 2,
+    )
+    logger.debug('模板组最高匹配: %s，匹配率 %.4f', path, score)
+    return avg, score, path
 
 
 def get_xy(img_model_path):
@@ -16,56 +173,8 @@ def get_xy(img_model_path):
     :param img_model_path:输入需要找的图片
     :return:坐标,匹配度（1是完全，0是不匹配）
     """
-    window = find_win('MadokaExedra')
-    if window is None:
-        return None, 0.0
-
-    left, top, width, height = window
-    try:
-        screenshot = pyautogui.screenshot(region=(left, top, width, height))
-        img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
-    except Exception as e:
-        logger.warning("游戏窗口截图失败: %s", e)
-        return None, 0.0
-
-    #要找的模板
-    img_terminal = cv2.imread(img_model_path)
-    if img_terminal is None:
-        logger.warning("模板图片读取失败: %s", img_model_path)
-        return None, 0.0
-
-    #读取模板宽度和高度
-    height,width,ch= img_terminal.shape
-    if height > img.shape[0] or width > img.shape[1]:
-        logger.warning("模板尺寸大于游戏窗口: %s", img_model_path)
-        return None, 0.0
-
-    #匹配，返回一个值
-    try:
-        result = cv2.matchTemplate(img, img_terminal, cv2.TM_SQDIFF_NORMED)
-        min_val, _max_val, min_loc, _max_loc = cv2.minMaxLoc(result)
-    except cv2.error as e:
-        logger.warning("模板匹配失败: %s", e)
-        return None, 0.0
-
-    # 匹配率查看（TM_SQDIFF_NORMED越接近0越匹配,所以这里反一下）
-    match_rate = math.sqrt(min_val)
-    # match_rate = min_val
-    logger.debug("匹配率: %.4f", 1-match_rate)
-
-    #这个输出的是左上角坐标，是result的第3个值
-    upper_left = min_loc
-
-
-    #算出右下角，这里要注意，你不能直接取出右下角，不然会发生不幸。截图需要准确
-    lower_right = (upper_left[0]+ width, upper_left[1]+height)
-
-    #计算中心
-    avg = (
-        left + int((upper_left[0] + lower_right[0]) / 2),
-        top + int((upper_left[1] + lower_right[1]) / 2),
-    )
-    return avg,1-match_rate
+    avg, score, _path = best_template_match([img_model_path])
+    return avg, score
 
 def click_auto(var_avg, can_click=None):
     """
@@ -75,12 +184,16 @@ def click_auto(var_avg, can_click=None):
     """
     #这里采取的先移动后点击的策略，如果直接点击，游戏会判定无效
     try:
-        pyautogui.moveTo(var_avg[0], var_avg[1])
-        time.sleep(0.1) #等待一会
-        if can_click is not None and not can_click():
-            logger.debug('任务已停止，取消点击')
+        if not _wait_for_user(can_click):
             return 1
-        pyautogui.click(var_avg[0], var_avg[1], button='left')
+        with _automation_input(can_click):
+            pyautogui.moveTo(var_avg[0], var_avg[1])
+            time.sleep(0.1) #等待一会
+            if can_click is not None and not can_click():
+                logger.debug('任务已停止，取消点击')
+                return 1
+            pyautogui.click(var_avg[0], var_avg[1], button='left')
+            _record_automation_position(can_click, var_avg)
     except Exception as e:
         logger.warning('鼠标点击失败: %s', e)
         return 1
@@ -99,9 +212,11 @@ def routine (img_model_path,name, can_click=None):
     :param name:这个没有实际作用，只是一个提示
     :return:输出2代表点了，输出1代表没点
     """
+    if not _wait_for_user(can_click):
+        return int(1)
     avg,match_rate= get_xy(img_model_path)
 
-    if avg is not None and match_rate>0.8:
+    if avg is not None and match_rate > MATCH_THRESHOLD:
         if can_click is not None and not can_click():
             logger.debug('任务已停止，不点击%s', name)
             return int(1)
@@ -121,11 +236,13 @@ def routine_only_find(img_model_path, name, can_find=None):
     """
     if can_find is not None and not can_find():
         return int(1)
+    if not _wait_for_user(can_find):
+        return int(1)
     avg,match_rate= get_xy(img_model_path)
     if can_find is not None and not can_find():
         return int(1)
 
-    if avg is not None and match_rate>0.8:
+    if avg is not None and match_rate > MATCH_THRESHOLD:
         logger.debug('存在%s元素，不会点击', name)
         # click_auto(avg)
         return int(2)
@@ -156,6 +273,27 @@ def get_client_size(title='MadokaExedra'):
         return width, height
     except Exception as e:
         logger.warning("读取客户区失败: %s", e)
+        return None
+
+
+def get_client_region(title='MadokaExedra'):
+    """返回客户区在屏幕上的 (left, top, width, height)，不含标题栏和边框。"""
+    try:
+        wins = pwc.getWindowsWithTitle(title)
+    except Exception as e:
+        logger.warning('查找窗口失败: %s', e)
+        return None
+    if not wins:
+        return None
+    try:
+        rect = wins[0].getClientFrame()
+        left, top = rect.left, rect.top
+        width, height = rect.right - left, rect.bottom - top
+        if width <= 0 or height <= 0:
+            return None
+        return left, top, width, height
+    except Exception as e:
+        logger.warning('读取客户区位置失败: %s', e)
         return None
 
 

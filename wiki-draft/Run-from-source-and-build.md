@@ -31,17 +31,17 @@ python main.py
 
 `main.py` is the entry point. On startup it changes the working directory to the script directory so relative runtime paths (`./aim/...`, `./resource/...`) resolve correctly. Startup calls `language_switcher.ensure_active()`, which restores or creates the `aim/` directory junction.
 
-Startup also calls `log_setup.configure_logging()` to configure logging: the console defaults to WARNING and above (so image-recognition retries do not spam), while DEBUG-level entries are written to a rotating file under `logs/` for post-mortem analysis. Set `MAGIA_LOG_LEVEL=DEBUG` to surface all log output on the console.
+Startup also calls `log_setup.configure_logging()` to configure logging. The GUI log level can be selected at runtime from DEBUG / INFO / WARNING / ERROR / CRITICAL; windowed builds provide logs through the GUI and rotating DEBUG files under `logs/`. When running from source, the console defaults to WARNING and above (so image-recognition retries do not spam), and `MAGIA_LOG_LEVEL` controls its level; for example, set `MAGIA_LOG_LEVEL=DEBUG` to show all log output.
 
 ## Packaging
 
 Use PyInstaller onedir mode:
 
 ```bash
-pyinstaller -D -i resource/main.ico -n Magia_Exedra_auto main.py
+pyinstaller -D --windowed -i resource/main.ico -n Magia_Exedra_auto main.py
 ```
 
-`-n Magia_Exedra_auto` names the built entry executable after the project (`Magia_Exedra_auto.exe` instead of the default `main.exe`); this is the entry executable used in releases. This produces only the PyInstaller onedir output (`dist/Magia_Exedra_auto/` containing `Magia_Exedra_auto.exe` and `_internal/`). A distributable package must also place version-controlled runtime files beside `Magia_Exedra_auto.exe`:
+`--windowed` prevents an empty console window from appearing beside the GUI. Older console-mode frozen builds remain compatible and hide an existing console at startup. `-n Magia_Exedra_auto` names the built entry executable after the project (`Magia_Exedra_auto.exe` instead of the default `main.exe`); this is the entry executable used in releases. This produces only the PyInstaller onedir output (`dist/Magia_Exedra_auto/` containing `Magia_Exedra_auto.exe` and `_internal/`). A distributable package must also place version-controlled runtime files beside `Magia_Exedra_auto.exe`:
 
 - `resource/` (icons and other resources)
 - `language/` (template packs, including `.gitkeep` placeholders)

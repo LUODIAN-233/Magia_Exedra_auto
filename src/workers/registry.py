@@ -3,7 +3,7 @@
 #声明自己的显示名、起始界面提示和参数列表，GUI 遍历 REGISTRY 自动生成按钮和参数控件。
 #
 #参数（ParamSpec）描述一个 worker 启动前需要 GUI 收集的输入：
-#  kind='choice'    单选（如 link raid 等级 lv6~lv12），用 QRadioButton 组
+#  kind='choice'    单选（如 Link Raid 等级），用 QRadioButton 组
 #  kind='lp_recover' 喝体力药次数，用 最小/-1/输入/+1/最大 那套控件；显示的是"喝几次"，
 #                   传给 worker 时自动 +1（存储语义：1=不喝药，2=喝一次……，见 AGENTS.md）
 #  kind='int'       普通整数输入（留作扩展，当前未用）
@@ -35,6 +35,7 @@ class WorkerMeta:
     worker_class: type          #BaseWorker 子类
     params: List[ParamSpec]     #参数列表
     start_hint: str = ''        #启动提示（如 '需要在游戏主界面启动'）
+    #可使用 {参数名}，启动时按当前 GUI 参数展开，例如 lv{level_choice}
     required_templates: List[str] = field(default_factory=list)
 
 
@@ -53,6 +54,7 @@ def register(name, label, params=None, start_hint='', required_templates=None):
         if not isinstance(name, str) or not name or any(m.name == name for m in REGISTRY):
             raise ValueError(f'worker 注册名无效或重复: {name!r}')
         specs = list(params or [])
+        param_keys = {spec.key for spec in specs}
         for spec in specs:
             if spec.kind not in ('choice', 'lp_recover', 'int'):
                 raise ValueError(f'{name}.{spec.key} 的参数类型无效: {spec.kind}')
@@ -61,13 +63,21 @@ def register(name, label, params=None, start_hint='', required_templates=None):
                     raise ValueError(f'{name}.{spec.key} 的默认选项无效')
             elif not (spec.min <= spec.default <= spec.max):
                 raise ValueError(f'{name}.{spec.key} 的默认值不在范围内')
+        templates = list(required_templates or [])
+        for template in templates:
+            if not isinstance(template, str) or not template:
+                raise ValueError(f'{name} 的必需模板路径无效')
+            try:
+                template.format(**{key: 0 for key in param_keys})
+            except (KeyError, ValueError) as e:
+                raise ValueError(f'{name} 的动态模板路径无效: {template}') from e
         REGISTRY.append(WorkerMeta(
             name=name,
             label=label,
             worker_class=cls,
             params=specs,
             start_hint=start_hint,
-            required_templates=list(required_templates or []),
+            required_templates=templates,
         ))
         return cls
     return decorator

@@ -9,6 +9,22 @@ import uuid
 import time
 import logging
 import winreg
+import ctypes
+
+
+def _hide_frozen_console():
+    #兼容已经按 console 模式构建的发行版；新的 --windowed 构建不会创建控制台。
+    if not getattr(sys, 'frozen', False):
+        return
+    try:
+        console = ctypes.windll.kernel32.GetConsoleWindow()
+        if console:
+            ctypes.windll.user32.ShowWindow(console, 0)  # SW_HIDE
+    except (AttributeError, OSError):
+        pass
+
+
+_hide_frozen_console()
 
 # 必须在间接导入 cv2 前设置，打包环境下才会生效。
 if getattr(sys, "frozen", False):
@@ -34,13 +50,25 @@ from src.packs import language_switcher, image_scaler
 logger = logging.getLogger(__name__)
 
 
+class GuiLogHandler(logging.Handler):
+    def __init__(self, emit_log):
+        super().__init__()
+        self.emit_log = emit_log
+
+    def emit(self, record):
+        try:
+            self.emit_log(self.format(record))
+        except (RuntimeError, RecursionError):
+            pass
+
+
 def get_worker_registry():
     #PyAutoGUI 导入时会设置进程 DPI 模式，因此必须等 QApplication 先完成 Qt 的 DPI 初始化。
     from src.workers import get_registry
     return get_registry()
 
 
-# pyinstaller.exe -D -i resource/main.ico  main.py
+# pyinstaller -D --windowed -i resource/main.ico -n Magia_Exedra_auto main.py
 #这个是导出用的
 
 
@@ -219,6 +247,7 @@ class mywindow(QWidget):
     updateProgress = Signal(str, int, int)
     updateReady = Signal(str, object)
     updateFailed = Signal(str, str)
+    debugLog = Signal(str)
     def __init__(self):
         super().__init__()
 
@@ -248,6 +277,13 @@ class mywindow(QWidget):
         # 用于输出运行日志的框体
         self.textedit_1 = QPlainTextEdit()
         self.textedit_1.document().setMaximumBlockCount(2000)
+        self.debugLog.connect(self._append_raw_log)
+        self._gui_log_handler = GuiLogHandler(self.debugLog.emit)
+        self._gui_log_handler.setLevel(logging.WARNING)
+        self._gui_log_handler.setFormatter(logging.Formatter(
+            '[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s', datefmt='%H:%M:%S',
+        ))
+        logging.getLogger().addHandler(self._gui_log_handler)
 
         #遍历注册表，为每个挂机模式创建 worker 和参数页；下拉选择后只显示当前脚本的参数。
         self._entries = []
@@ -277,6 +313,11 @@ class mywindow(QWidget):
         #勾选后检查更新时包含预发布（beta）版本；默认不勾选，只更新到正式版
         self.betaCheckBox = QCheckBox('更新至 beta 版')
         self.betaCheckBox.setToolTip('勾选后检查更新会包含预发布（beta）版本；不勾选则只更新到正式版')
+        self.logLevelLabel = QLabel('GUI 日志等级')
+        self.logLevelCombo = QComboBox()
+        self.logLevelCombo.addItems(['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'])
+        self.logLevelCombo.setCurrentText('WARNING')
+        self.logLevelCombo.currentTextChanged.connect(self._change_log_level)
         self.updateChecked.connect(self._on_update_checked)
         self.updateProgress.connect(self._on_update_progress)
         self.updateReady.connect(self._on_update_ready)
@@ -305,6 +346,10 @@ class mywindow(QWidget):
         self.mainlayout.addWidget(self.scriptCombo)
         self.mainlayout.addWidget(self.paramStack)
         self.mainlayout.addWidget(self.startButton)
+        log_level_row = QHBoxLayout()
+        log_level_row.addWidget(self.logLevelLabel)
+        log_level_row.addWidget(self.logLevelCombo)
+        self.mainlayout.addLayout(log_level_row)
         update_row = QHBoxLayout()
         update_row.addWidget(self.checkUpdateBtn)
         update_row.addWidget(self.betaCheckBox)
@@ -574,6 +619,13 @@ class mywindow(QWidget):
     def _append_log(self, text):
         self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {text}")
 
+    def _append_raw_log(self, text):
+        self.textedit_1.appendPlainText(text)
+
+    def _change_log_level(self, level):
+        self._gui_log_handler.setLevel(getattr(logging, level))
+        self._append_log(f'GUI 日志等级已切换为 {level}；用户操作消息不受过滤。')
+
     def _build_param_widget(self, spec):
         #根据 ParamSpec.kind 生成对应控件，返回 (QLayout, getter函数, 可禁用控件列表)
         layout = QVBoxLayout()
@@ -752,6 +804,7 @@ class mywindow(QWidget):
                 return
         else:
             self._reset_update_state(cleanup=True)
+        logging.getLogger().removeHandler(self._gui_log_handler)
         event.accept()
 
     def _stop_automation(self):
@@ -792,20 +845,25 @@ class mywindow(QWidget):
         if selection is None:
             self._append_log('当前没有有效的模板 pack，本次挂机未启动。')
             return
+        #先读取参数，动态模板路径（如 lv{level_choice}）才能只校验当前选择。
+        worker = entry['worker']
+        try:
+            params = {key: getter() for key, getter in entry['getters'].items()}
+            required_templates = [
+                path.format(**params) for path in entry['meta'].required_templates
+            ]
+        except (KeyError, TypeError, ValueError) as e:
+            self._append_log(str(e))
+            return
         valid, errors = language_switcher.validate_template_groups(
-            selection[0], selection[1], entry['meta'].required_templates,
+            selection[0], selection[1], required_templates,
         )
         if not valid:
             self._append_log('当前模板 pack 不完整，本次挂机未启动：\n' + '\n'.join(errors[:20]))
             return
-        #收集 GUI 参数到 worker（lp_recover 已在 getter 里 +1 为存储值）
-        worker = entry['worker']
-        try:
-            for key, getter in entry['getters'].items():
-                setattr(worker, key, getter())
-        except (TypeError, ValueError) as e:
-            self._append_log(str(e))
-            return
+        #注入已校验参数（lp_recover 已在 getter 里 +1 为存储值）
+        for key, value in params.items():
+            setattr(worker, key, value)
         worker.expected_pack = selection
         if entry['meta'].start_hint:
             self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {entry['meta'].start_hint}")

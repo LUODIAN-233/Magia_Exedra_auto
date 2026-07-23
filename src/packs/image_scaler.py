@@ -38,7 +38,7 @@ SOURCE_H = 1440
 #和 image.bash 一致的扩展名
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 MANIFEST_NAME = ".source_hashes.json"
-RECIPE_VERSION = 1
+RECIPE_VERSION = 2
 SCALE_FACTORS = {
     "1280x720": 0.5,
     "1920x1080": 0.75,
@@ -80,7 +80,7 @@ def _magick_cmd():
 
 
 def _run_magick(src, dst, factor, is_cancelled=None):
-    #magick <src> -resize N00% <dst>，按倍率放大且宽高比不变；:g 去掉 1.5x 的 ".0"
+    #Triangle 接近游戏实时缩放常用的双线性插值，减少模板与游戏画面的锐化差异。
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     prefix, env = _magick_cmd()
     fd, temp_dst = tempfile.mkstemp(
@@ -90,7 +90,7 @@ def _run_magick(src, dst, factor, is_cancelled=None):
     )
     os.close(fd)
     os.remove(temp_dst)
-    cmd = prefix + [src, "-resize", f"{factor * 100:g}%", temp_dst]
+    cmd = prefix + [src, "-filter", "Triangle", "-resize", f"{factor * 100:g}%", temp_dst]
     try:
         process = subprocess.Popen(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
