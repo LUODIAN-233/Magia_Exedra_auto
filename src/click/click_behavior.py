@@ -129,6 +129,32 @@ def routine_only_find(img_model_path, name, can_find=None):
         print(f'匹配率太低，不存在{name}元素，这个不会进行点击')
         return int(1)
 
+def get_client_size(title='MadokaExedra'):
+    """
+    返回游戏窗口客户区（实际渲染区域，不含标题栏/边框）的 (width, height)。
+    客户区才是游戏真正的"画面分辨率"，比外框尺寸更贴合模板 pack 的标称分辨率。
+    找不到窗口或读取失败返回 None。
+    注意：本函数不激活/恢复窗口，调用方需保证窗口已正常显示（如先调用 find_win）。
+    """
+    try:
+        wins = pwc.getWindowsWithTitle(title)
+    except Exception as e:
+        print(f"查找窗口失败: {e}")
+        return None
+    if not wins:
+        return None
+    try:
+        rect = wins[0].getClientFrame()
+        width = rect.right - rect.left
+        height = rect.bottom - rect.top
+        if width <= 0 or height <= 0:
+            return None
+        return width, height
+    except Exception as e:
+        print(f"读取客户区失败: {e}")
+        return None
+
+
 def find_win(title):
     """
     点击的事实上的使用函数

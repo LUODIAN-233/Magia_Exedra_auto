@@ -39,6 +39,7 @@
 ### General Features
 
 - Brings the game window to the foreground on startup
+- Before starting, detects the game window's client-area resolution and compares it with the selected template pack using a tolerant margin (accommodates small drift from title bar / borders / DPI scaling); logs a warning on mismatch
 - Stop button can interrupt any farming task at any time
 - The two farming modes are mutually exclusive; template switching and refresh are disabled while a task is running
 - Select a farming script from a dropdown; only that script's parameters are shown, so new modes do not keep extending the window vertically
@@ -56,7 +57,7 @@
 |:-----:|:---------|
 | Image recognition | OpenCV `TM_SQDIFF_NORMED`, match threshold `0.8` |
 | Click actions | PyAutoGUI (move-then-click, otherwise the game rejects the input) |
-| Window management | pywinctl (find window by title `MadokaExedra`) |
+| Window management | pywinctl (find window by title `MadokaExedra`, read client-area resolution) |
 | GUI | PySide6 |
 | Asset scaling | ImageMagick (`tools/ImageMagick/magick.exe`) |
 | Template switching | Windows directory junction; `aim/` points to the real pack under `language/` |
@@ -157,7 +158,7 @@ Automatically scales the 2K (2560×1440) source assets to other resolutions:
 
 ## Notes
 
-> **Testing status:** The latest changes to thread stopping, wait timeouts, game-window capture, and incremental template scaling have only passed syntax, import, and static diff checks. They have not yet undergone extended end-to-end testing against the live game. Monitor a short run before leaving the bot unattended.
+> **Testing status:** The latest changes to thread stopping, wait timeouts, game-window capture, incremental template scaling, and game-window resolution detection have only passed syntax, import, and static diff checks. They have not yet undergone extended end-to-end testing against the live game. Monitor a short run before leaving the bot unattended.
 
 - The **game window must be in the foreground and unobstructed**; the bot window itself can remain in the background
 - The first click of Link Raid uses **hardcoded coordinates** (`2000,1000` → `2400,1200`, 2K baseline); they auto-scale to the active resolution, so 720p / 1080p / 2K / 4K all work
@@ -178,8 +179,8 @@ Magia_Exedra_auto/
 │   │   ├── link_raid.py     # Link Raid farming flow
 │   │   └── crystalis.py     # Crystalis farming flow
 │   ├── click/               # Click module package
-│   │   ├── click_action.py  # High-level click actions (template iteration, coordinate clicks, drags)
-│   │   └── click_behavior.py# Low-level ops (screenshot, match, click, window focus)
+│   │   ├── click_action.py  # High-level click actions (template iteration, coordinate clicks, drags, resolution detection)
+│   │   └── click_behavior.py# Low-level ops (screenshot, match, click, window focus, client-area size)
 │   └── packs/               # Template-pack management (stdlib-only, runnable standalone)
 │       ├── language_switcher.py # Language/resolution switching (junction management)
 │       └── image_scaler.py  # Asset scaling (2K -> other resolutions)

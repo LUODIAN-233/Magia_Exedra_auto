@@ -168,3 +168,49 @@ def move_a_to_b_scaled(ax_2k, ay_2k, bx_2k, by_2k, can_move=None):
         round(bx_2k * f), round(by_2k * f),
         can_move,
     )
+
+
+#识别游戏窗口客户区分辨率，并与当前激活模板 pack 的标称分辨率做容差比对。
+#客户区是实际渲染区（不含标题栏/边框），比外框尺寸更贴合 pack 标称分辨率。
+#容差：宽高各自允许 |detected - expected| <= max(40, round(expected * tolerance))，
+#兼容标题栏/边框/DPI 缩放带来的小幅偏差，不要求严格相等。
+def detect_window_resolution(tolerance=0.1):
+    sel = language_switcher.current_selection()
+    expected_res = sel[1] if sel else None
+    expected = None
+    if expected_res:
+        try:
+            w_s, h_s = expected_res.lower().split('x')
+            expected = (int(w_s), int(h_s))
+        except Exception:
+            expected = None
+
+    detected = click_behavior.get_client_size()
+
+    result = {
+        'detected': detected,
+        'expected': expected,
+        'expected_res': expected_res,
+        'matched': False,
+        'message': '',
+    }
+
+    if detected is None:
+        result['message'] = '未能读取游戏窗口客户区尺寸（窗口可能未显示或已被关闭）'
+        return result
+    if expected is None:
+        result['message'] = f'未激活模板 pack，无法比对分辨率。检测到窗口客户区: {detected[0]}x{detected[1]}'
+        return result
+
+    def _within(d, e):
+        margin = max(40, round(e * tolerance))
+        return abs(d - e) <= margin
+
+    matched = _within(detected[0], expected[0]) and _within(detected[1], expected[1])
+    result['matched'] = matched
+    if matched:
+        result['message'] = f'窗口分辨率匹配: 检测到 {detected[0]}x{detected[1]}，模板 pack {expected_res}'
+    else:
+        result['message'] = (f'窗口分辨率不匹配: 检测到 {detected[0]}x{detected[1]}，'
+                             f'模板 pack 为 {expected_res}，请检查游戏窗口分辨率与所选模板是否一致')
+    return result

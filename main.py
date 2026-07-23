@@ -476,10 +476,15 @@ class mywindow(QWidget):
         if self._automation_running():
             self.textedit_1.appendPlainText('已有挂机任务运行中，请先停止。')
             return
-        from src.click import click_behavior
+        from src.click import click_behavior, click_action
         if click_behavior.find_win('MadokaExedra') is None:
             self._append_log('未找到游戏窗口 MadokaExedra，本次挂机已停止。请先启动游戏。')
             return
+        #识别游戏窗口分辨率并与当前模板 pack 容差比对（标题栏/边框/DPI 的小幅偏差可容忍）
+        res_info = click_action.detect_window_resolution()
+        self._append_log(res_info['message'])
+        if not res_info['matched']:
+            self._append_log('分辨率不一致可能导致识图失败，请确认游戏窗口分辨率与所选模板 pack 一致。')
         #收集 GUI 参数到 worker（lp_recover 已在 getter 里 +1 为存储值）
         worker = entry['worker']
         for key, getter in entry['getters'].items():
