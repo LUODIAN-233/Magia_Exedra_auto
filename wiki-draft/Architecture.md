@@ -73,7 +73,7 @@ Each run starts a `UserActivityGuard`. Keyboard input or cumulative large mouse 
 
 ### link_raid.py
 
-Link Raid flow: navigation, backup requests, refresh, joined-battle cleanup, level selection, join/LP handling, battle completion, likes, and return. Normal results and joined-battle cleanup invoke the shared like flow only after `tap_to_countinue` succeeds; clicking `joined_battles` itself does not trigger likes. It supports LV4 and LV6-LV12. If the selected level is missing or cannot be clicked, it refreshes and searches again instead of joining another level. Initial navigation and scrolling use scaled 2K-baseline coordinates.
+Link Raid flow: navigation, backup requests, refresh, joined-battle cleanup, level selection, join/LP handling, battle completion, likes, and return. Level selection first locates the selected template's best candidate, then compares every supported level near that same position and independently compares the central level-number region. It clicks only when both the full image and number region classify as the selected level; every level template is therefore a startup-required competitor. Normal results and joined-battle cleanup invoke the shared like flow only after `tap_to_countinue` succeeds; clicking `joined_battles` itself does not trigger likes. It supports LV4 and LV6-LV12. If the selected level is missing or cannot be clicked, it refreshes and searches again instead of joining another level. Initial navigation and scrolling use scaled 2K-baseline coordinates.
 
 ### crystalis.py
 

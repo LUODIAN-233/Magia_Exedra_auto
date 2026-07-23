@@ -56,7 +56,14 @@ logger = logging.getLogger(__name__)
         'quests/link_raid/backup_requests/join/full/already_end',
         'quests/link_raid/backup_requests/battle/tap_to_countinue',
         'quests/link_raid/backup_requests/battle/back',
-        'quests/link_raid/backup_requests/lv/lv{level_choice}/lv{level_choice}',
+        'quests/link_raid/backup_requests/lv/lv4/lv4',
+        'quests/link_raid/backup_requests/lv/lv6/lv6',
+        'quests/link_raid/backup_requests/lv/lv7/lv7',
+        'quests/link_raid/backup_requests/lv/lv8/lv8',
+        'quests/link_raid/backup_requests/lv/lv9/lv9',
+        'quests/link_raid/backup_requests/lv/lv10/lv10',
+        'quests/link_raid/backup_requests/lv/lv11/lv11',
+        'quests/link_raid/backup_requests/lv/lv12/lv12',
     ],
 )
 class LinkRaidWorker(BaseWorker):
@@ -327,15 +334,19 @@ class LinkRaidWorker(BaseWorker):
 
     # 寻找需要打架的等级，找不到时由外层刷新列表后重试
     def find_lv(self):
+        level_pictures = {
+            level: f'./aim/quests/link_raid/backup_requests/lv/lv{level}/lv{level}'
+            for level in (4, 6, 7, 8, 9, 10, 11, 12)
+        }
         # 往下拉 3 次用于寻找
         find_time = 4
         # 这个判断对应等级是否存在，1 是没找到，2 是找到了默认设置没找到，进入第一次循环
         self.level_choice_exist = 1
 
         while self._running() and find_time > 1 and self.level_choice_exist == 1:
-            self.level_choice_exist = click_action.find_item_with_result(self,
-                                                                         f'./aim/quests/link_raid/backup_requests/lv/lv{self.level_choice}/lv{self.level_choice}',
-                                                                         f'lv{self.level_choice}')
+            self.level_choice_exist = click_action.find_competing_item_with_result(
+                self, self.level_choice, level_pictures, f'lv{self.level_choice}'
+            )
             if self.level_choice_exist == 2:
                 self.signal.emit(str(f'lv{self.level_choice}找到了，下一步是选择'))
             else:
@@ -350,9 +361,9 @@ class LinkRaidWorker(BaseWorker):
 
         if self.level_choice_exist == 2:
             if self._running():  # 这里不可以用 while，只能运行一遍
-                result = click_action.click_item_with_result(self,
-                                                             f'./aim/quests/link_raid/backup_requests/lv/lv{self.level_choice}/lv{self.level_choice}',
-                                                             f'lv{self.level_choice}')
+                result = click_action.click_competing_item_with_result(
+                    self, self.level_choice, level_pictures, f'lv{self.level_choice}'
+                )
                 if result == 2:
                     self.signal.emit(str(f'lv{self.level_choice}点击完成'))
                     return True

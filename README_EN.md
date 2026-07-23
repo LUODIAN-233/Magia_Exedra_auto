@@ -60,6 +60,8 @@ See [Wiki · Run from source and build](https://github.com/LUODIAN-233/Magia_Exe
 
 > If the selected LV4 or LV6-LV12 battle is unavailable, the bot refreshes the backup-request list and searches again instead of joining another level.
 >
+> Level recognition compares LV4 and LV6-LV12 at the same candidate position and independently compares the central level-number region. It clicks only when both the full image and number region classify as the selected level, preventing shared backgrounds from making LV6, LV11, LV12, or other templates match the wrong row.
+>
 > During normal results or finished-battle cleanup, the bot checks for and gives available likes only after successfully clicking `tap_to_countinue`; clicking `joined_battles` itself does not trigger likes.
 
 ### Crystalis

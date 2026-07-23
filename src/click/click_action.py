@@ -89,6 +89,50 @@ def find_item_with_result(self, picture, name):
         return 1
     return 2 if found else 1
 
+
+def click_competing_item_with_result(self, selected, pictures, name):
+    groups = {key: _template_files(picture) for key, picture in pictures.items()}
+    can_click = getattr(self, '_running', None)
+    if can_click is not None and not can_click():
+        return 1
+    if any(not files for files in groups.values()) or not _wait_for_user(can_click):
+        return 1
+    label, text_label, avg, score, text_score, path = \
+        click_behavior.best_competing_template_match(selected, groups)
+    if label != selected or text_label != selected \
+            or score <= click_behavior.MATCH_THRESHOLD \
+            or text_score <= click_behavior.MATCH_THRESHOLD:
+        logger.debug('竞争识别%s失败；整图=%s/%s %.4f，文字=%s %.4f',
+                     name, label, path, score, text_label, text_score)
+        if _wait(self, 0.4):
+            return 1
+        return 1
+    logger.debug('竞争识别点击%s的模板%s，整图 %.4f，文字 %.4f',
+                 name, path, score, text_score)
+    result = click_behavior.click_auto(avg, can_click)
+    if result == 2 and _wait(self, 0.5):
+        return 1
+    return result
+
+
+def find_competing_item_with_result(self, selected, pictures, name):
+    groups = {key: _template_files(picture) for key, picture in pictures.items()}
+    can_find = getattr(self, '_running', None)
+    if can_find is not None and not can_find():
+        return 1
+    if any(not files for files in groups.values()) or not _wait_for_user(can_find):
+        return 1
+    label, text_label, _avg, score, text_score, path = \
+        click_behavior.best_competing_template_match(selected, groups)
+    found = label == selected and text_label == selected \
+        and score > click_behavior.MATCH_THRESHOLD \
+        and text_score > click_behavior.MATCH_THRESHOLD
+    logger.debug('竞争寻找%s：整图=%s/%s %.4f，文字=%s %.4f，结果%s',
+                 name, label, path, score, text_label, text_score, 2 if found else 1)
+    if _wait(self, 0.5 if found else 0.4):
+        return 1
+    return 2 if found else 1
+
 #用于点击特定位置，输入坐标，第一个为窗口左到右的偏移，第二个上到下，注意上到下会有一个窗体厚度，不同缩放倍率会不同！
 def click_position(move_lelt, move_top, can_click=None):
     if not _wait_for_user(can_click):

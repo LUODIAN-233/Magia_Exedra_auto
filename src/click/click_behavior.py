@@ -167,6 +167,82 @@ def best_template_match(template_paths):
     return avg, score, path
 
 
+def best_competing_template_match(selected, template_groups, radius=3):
+    """在所选候选位置分别比较整图和中央等级文字区域。"""
+    screen, origin = _capture_game_window()
+    if screen is None:
+        return None, None, None, 0.0, 0.0, None
+    match_screen = cv2.GaussianBlur(screen, (3, 3), 0)
+    selected_best = None
+    for path in template_groups.get(selected, ()):
+        template = cv2.imread(str(path))
+        if template is None:
+            logger.warning('模板图片读取失败: %s', path)
+            continue
+        matched = _match_one(match_screen, template)
+        if matched is None:
+            continue
+        location, size, score = matched
+        if selected_best is None or score > selected_best[0]:
+            selected_best = score, location, size, str(path)
+    if selected_best is None:
+        return None, None, None, 0.0, 0.0, None
+
+    selected_score, selected_location, selected_size, selected_path = selected_best
+    best = selected_score, selected, selected_location, selected_size, selected_path
+    text_best = None
+    for label, template_paths in template_groups.items():
+        for path in template_paths:
+            template = cv2.imread(str(path))
+            if template is None:
+                logger.warning('模板图片读取失败: %s', path)
+                continue
+            height, width = template.shape[:2]
+            if height > match_screen.shape[0] or width > match_screen.shape[1]:
+                continue
+            match_template = cv2.GaussianBlur(template, (3, 3), 0)
+            result = cv2.matchTemplate(match_screen, match_template, cv2.TM_SQDIFF_NORMED)
+            x, y = selected_location
+            left = max(0, x - radius)
+            top = max(0, y - radius)
+            right = min(result.shape[1], x + radius + 1)
+            bottom = min(result.shape[0], y + radius + 1)
+            local = result[top:bottom, left:right]
+            if local.size == 0:
+                continue
+            min_val, _max_val, min_loc, _max_loc = cv2.minMaxLoc(local)
+            score = 1 - math.sqrt(max(0.0, min(1.0, min_val)))
+            location = (left + min_loc[0], top + min_loc[1])
+            if score > best[0]:
+                best = score, label, location, (width, height), str(path)
+
+            # 独立比较右侧等级数字，不让公共背景和左侧 LV 前缀主导第二分类器。
+            margin_x = round(width * 0.55)
+            right_margin = 5
+            margin_y = max(3, round(height * 0.12))
+            text_template = match_template[margin_y:height - margin_y,
+                                           margin_x:width - right_margin]
+            text_screen = match_screen[location[1] + margin_y:location[1] + height - margin_y,
+                                       location[0] + margin_x:location[0] + width - right_margin]
+            if text_template.size == 0 or text_screen.shape != text_template.shape:
+                continue
+            text_value = float(cv2.matchTemplate(
+                text_screen, text_template, cv2.TM_SQDIFF_NORMED
+            )[0, 0])
+            text_score = 1 - math.sqrt(max(0.0, min(1.0, text_value)))
+            if text_best is None or text_score > text_best[0]:
+                text_best = text_score, label, str(path)
+    score, label, location, size, path = best
+    if text_best is None:
+        return label, None, None, score, 0.0, path
+    text_score, text_label, text_path = text_best
+    avg = (origin[0] + selected_location[0] + selected_size[0] // 2,
+           origin[1] + selected_location[1] + selected_size[1] // 2)
+    logger.debug('所选候选位置整图最高: %s/%s %.4f；文字区域最高: %s/%s %.4f',
+                 label, path, score, text_label, text_path, text_score)
+    return label, text_label, avg, score, text_score, path
+
+
 def get_xy(img_model_path):
     """
     找到需要点击什么的坐标
