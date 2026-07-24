@@ -27,7 +27,7 @@ except ModuleNotFoundError:
     template_write_lock = None
     template_mutex_name = None
 
-VERSION = "2.3.1"                      #当前版本（语义化，无前缀 v）；发布新版本时务必同步更新
+VERSION = "2.3.2-beta.1"                  #当前版本（语义化，无前缀 v）；发布新版本时务必同步更新
 REPO = "LUODIAN-233/Magia_Exedra_auto"
 RELEASES_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES_LIST_API = f"https://api.github.com/repos/{REPO}/releases"  #所有 release（含预发布），beta 通道用
@@ -466,6 +466,7 @@ $templateMutex = $null
 $mutexAcquired = $false
 $backupHashes = @{}
 $recoveryRequired = $false
+$updateError = $null
 function Get-SafePath([string]$root, [string]$relative) {
   if ([string]::IsNullOrWhiteSpace($relative) -or [IO.Path]::IsPathRooted($relative) -or
       $relative.Contains(':') -or $relative -match '(^|[\\/])\.\.([\\/]|$)') {
@@ -478,8 +479,88 @@ function Get-SafePath([string]$root, [string]$relative) {
   }
   return $full
 }
+$uiState = $null
+$uiRunspace = $null
+$uiPs = $null
+$uiHandle = $null
+try {
+  $uiState = [hashtable]::Synchronized(@{ Status = '正在初始化更新...'; Progress = 0; Maximum = 100; Marquee = $true; Closed = $false })
+  $uiRunspace = [runspacefactory]::CreateRunspace()
+  $uiRunspace.ApartmentState = 'STA'
+  $uiRunspace.ThreadOptions = 'ReuseThread'
+  $uiRunspace.Open()
+  $uiRunspace.SessionStateProxy.SetVariable('uiState', $uiState)
+  $uiPs = [PowerShell]::Create()
+  $uiPs.Runspace = $uiRunspace
+  $uiPs.AddScript({
+    try {
+      Add-Type -AssemblyName System.Windows.Forms
+      Add-Type -AssemblyName System.Drawing
+    } catch { return }
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = '更新 Magia Exedra Auto'
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.ControlBox = $false
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.StartPosition = 'CenterScreen'
+    $form.TopMost = $true
+    $form.Width = 440
+    $form.Height = 150
+    $form.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
+    $titleLabel = New-Object System.Windows.Forms.Label
+    $titleLabel.Text = '正在更新 Magia Exedra Auto，请勿关闭...'
+    $titleLabel.Location = New-Object System.Drawing.Point(15, 12)
+    $titleLabel.Size = New-Object System.Drawing.Size(400, 22)
+    $form.Controls.Add($titleLabel)
+    $statusLabel = New-Object System.Windows.Forms.Label
+    $statusLabel.Text = $uiState.Status
+    $statusLabel.Location = New-Object System.Drawing.Point(15, 42)
+    $statusLabel.Size = New-Object System.Drawing.Size(400, 20)
+    $form.Controls.Add($statusLabel)
+    $bar = New-Object System.Windows.Forms.ProgressBar
+    $bar.Location = New-Object System.Drawing.Point(15, 70)
+    $bar.Size = New-Object System.Drawing.Size(400, 22)
+    $bar.Style = 'Marquee'
+    $bar.MarqueeAnimationSpeed = 30
+    $form.Controls.Add($bar)
+    $form.Show()
+    while (-not $uiState.Closed) {
+      try {
+        if ($statusLabel.Text -ne $uiState.Status) { $statusLabel.Text = $uiState.Status }
+        if ($uiState.Marquee) {
+          if ($bar.Style -ne 'Marquee') { $bar.Style = 'Marquee' }
+        } else {
+          if ($bar.Style -ne 'Continuous') { $bar.Style = 'Continuous' }
+          if ($bar.Maximum -ne $uiState.Maximum) { $bar.Maximum = $uiState.Maximum }
+          $val = [int][Math]::Min([int]$uiState.Progress, [int]$uiState.Maximum)
+          if ($bar.Value -ne $val) { $bar.Value = $val }
+        }
+        [System.Windows.Forms.Application]::DoEvents()
+      } catch {}
+      Start-Sleep -Milliseconds 60
+    }
+    $form.Close()
+    $form.Dispose()
+  }) | Out-Null
+  $uiHandle = $uiPs.BeginInvoke()
+} catch {
+  $uiState = $null; $uiRunspace = $null; $uiPs = $null; $uiHandle = $null
+}
+function Update-Progress([string]$status, [int]$current = -1, [int]$maximum = 0) {
+  if (-not $uiState) { return }
+  $uiState.Status = $status
+  if ($current -ge 0 -and $maximum -gt 0) {
+    $uiState.Marquee = $false
+    $uiState.Maximum = $maximum
+    $uiState.Progress = [Math]::Min($current, $maximum)
+  } else {
+    $uiState.Marquee = $true
+  }
+}
 try {
   Add-Content -LiteralPath $c.log -Value "[$(Get-Date -Format o)] 更新开始"
+  Update-Progress '正在准备更新...'
   $templateMutex = New-Object System.Threading.Mutex($false, [string]$c.mutex)
   try {
     $mutexAcquired = $templateMutex.WaitOne([TimeSpan]::FromSeconds(60))
@@ -493,6 +574,7 @@ try {
       ConvertTo-Json -Compress | Set-Content -LiteralPath $lockTemp -Encoding UTF8
     Move-Item -LiteralPath $lockTemp -Destination $c.lock -Force
   }
+  Update-Progress '正在等待程序退出...'
   try { Wait-Process -Id ([int]$c.pid) -Timeout 60 -ErrorAction Stop } catch {
     if (Get-Process -Id ([int]$c.pid) -ErrorAction SilentlyContinue) { throw '等待主程序退出超时' }
   }
@@ -506,8 +588,15 @@ try {
     Copy-Item -LiteralPath $oldManifestPath -Destination (Join-Path $backup '.update-manifest.json') -Force
     $oldManifest = Get-Content -LiteralPath $oldManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
   }
+  $newFileCount = ($newManifest.files.PSObject.Properties | Measure-Object).Count
+  $oldFileCount = 0
+  if ($oldManifest) { $oldFileCount = ($oldManifest.files.PSObject.Properties | Measure-Object).Count }
   $existing = @{}
+  $totalBackup = $newFileCount + $oldFileCount
+  $backupIdx = 0
   foreach ($p in $newManifest.files.PSObject.Properties) {
+    $backupIdx++
+    Update-Progress '正在备份旧文件...' $backupIdx $totalBackup
     $target = Get-SafePath $c.dest $p.Name
     if (Test-Path -LiteralPath $target -PathType Leaf) {
       $copy = Get-SafePath $backup $p.Name
@@ -522,6 +611,8 @@ try {
   }
   if ($oldManifest) {
     foreach ($p in $oldManifest.files.PSObject.Properties) {
+      $backupIdx++
+      Update-Progress '正在备份旧文件...' $backupIdx $totalBackup
       $target = Get-SafePath $c.dest $p.Name
       $copy = Get-SafePath $backup $p.Name
       if ((Test-Path -LiteralPath $target -PathType Leaf) -and -not (Test-Path -LiteralPath $copy)) {
@@ -534,10 +625,14 @@ try {
       }
     }
   }
+  Update-Progress '正在复制新文件...'
   & robocopy $c.src $c.dest /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /XJ /NFL /NDL /NJH /NJS
   $rc = $LASTEXITCODE
   if ($rc -ge 8) { throw "robocopy 失败，返回码 $rc" }
+  $verifyIdx = 0
   foreach ($p in $newManifest.files.PSObject.Properties) {
+    $verifyIdx++
+    Update-Progress '正在校验更新文件...' $verifyIdx $newFileCount
     $target = Get-SafePath $c.dest $p.Name
     if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { throw "更新文件缺失: $($p.Name)" }
     $hash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -545,7 +640,10 @@ try {
   }
   if ($oldManifest) {
     $newNames = @{}; foreach ($p in $newManifest.files.PSObject.Properties) { $newNames[$p.Name] = $true }
+    $cleanIdx = 0
     foreach ($p in $oldManifest.files.PSObject.Properties) {
+      $cleanIdx++
+      Update-Progress '正在清理旧版本文件...' $cleanIdx $oldFileCount
       if (-not $newNames.ContainsKey($p.Name)) {
         $target = Get-SafePath $c.dest $p.Name
         if (Test-Path -LiteralPath $target -PathType Leaf) {
@@ -555,6 +653,7 @@ try {
       }
     }
   }
+  Update-Progress '正在启动新版本...'
   $health = Join-Path $c.job 'startup-health'
   $env:MAGIA_UPDATE_HEALTH = $health
   $newExe = Join-Path $c.dest $c.new_exe
@@ -572,8 +671,10 @@ try {
   Remove-Item -LiteralPath (Join-Path $c.job 'INSTALL_IN_PROGRESS') -Force
   Set-Content -LiteralPath (Join-Path $c.job 'update-success') -Value 'ok' -Encoding ASCII
 } catch {
+  $updateError = "$_"
   Add-Content -LiteralPath $c.log -Value $_
   if ($child -and -not $child.HasExited) { Stop-Process -Id $child.Id -Force -ErrorAction SilentlyContinue }
+  Update-Progress '正在回滚更新，请稍候...'
   $rollbackErrors = New-Object System.Collections.Generic.List[string]
   if ($newManifest) {
     foreach ($p in $newManifest.files.PSObject.Properties) {
@@ -622,9 +723,21 @@ try {
     Remove-Item -LiteralPath (Join-Path $c.job 'INSTALL_IN_PROGRESS') -Force -ErrorAction SilentlyContinue
   }
 } finally {
+  if ($uiState) { $uiState.Closed = $true }
+  if ($uiHandle -and $uiPs) { try { $uiPs.EndInvoke($uiHandle) } catch {} }
+  if ($uiPs) { $uiPs.Dispose() }
+  if ($uiRunspace) { try { $uiRunspace.Close() } catch {} }
   if ($mutexAcquired -and $templateMutex) { $templateMutex.ReleaseMutex() }
   if ($templateMutex) { $templateMutex.Dispose() }
   if ($c.lock -and -not $recoveryRequired) { Remove-Item -LiteralPath $c.lock -Force -ErrorAction SilentlyContinue }
+}
+if ($updateError) {
+  try { Add-Type -AssemblyName System.Windows.Forms } catch {}
+  try {
+    [System.Windows.Forms.MessageBox]::Show(
+      "更新失败：`r`n`r`n$updateError`r`n`r`n已尝试恢复旧版本，详情请查看日志。", '更新失败',
+      [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+  } catch {}
 }
 '''
     with open(ps_path, 'w', encoding='utf-8-sig') as f:
