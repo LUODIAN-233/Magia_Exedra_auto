@@ -64,6 +64,7 @@ logger = logging.getLogger(__name__)
         'quests/link_raid/backup_requests/lv/lv10/lv10',
         'quests/link_raid/backup_requests/lv/lv11/lv11',
         'quests/link_raid/backup_requests/lv/lv12/lv12',
+        'quests/link_raid/backup_requests/lv/no_lv',
     ],
 )
 class LinkRaidWorker(BaseWorker):
@@ -93,8 +94,6 @@ class LinkRaidWorker(BaseWorker):
         self.LP_full = 1
         # 体力药使用次数副本（运行时递减），1 是不用，2 是 1 次，最多 4 三次
         self.LP_full_add = self.lp_recover_times
-        # 是否找到需要打的等级，参数为 2 是找到，1 不是，用的点击代码进行寻找
-        self.level_choice_exist = 1
         # 点击 play 后因为打太多导致满了的情况，1 代表没满，2 代表满了
         self.join_full = 1
         # 找 win 至少运行成功一次，防止卡
@@ -315,88 +314,123 @@ class LinkRaidWorker(BaseWorker):
             self.signal.emit(str('refresh点击完成'))
 
     def prepare_matching_battle(self):
+        # 刷新前：先查一次目标等级
+        r = self._scan_lv()
         while self._running():
+            if r == 2:
+                # 找到并点击目标等级后，检查并清理打满的已结束对局
+                self.check_join_full()
+                if not self._running():
+                    return False
+                if self.join_full == 2:
+                    self.win_exist = 1
+                    while self._running() and self.join_full == 2:
+                        self.clean_full()
+                    if not self._running():
+                        return False
+                    # 清理会离开选等级界面，需重新查找并点击目标等级
+                    r = self._scan_lv()
+                    continue
+                return True
+            if r == 0:
+                # 既没找到目标等级也没发现 no_lv，下拉查找
+                r = self._find_lv_by_scroll()
+                continue
+            # r == 1：发现 no_lv 或下拉耗尽，刷新救援列表后重查
             self.prepare_battle()
             if not self._running():
                 return False
-            self.check_join_full()
-            if not self._running():
-                return False
-            self.win_exist = 1
-            while self._running() and self.join_full == 2:
-                self.clean_full()
-            if not self._running():
-                return False
-            if self.find_lv():
-                return True
-            self.signal.emit(f'未进入指定的 lv{self.level_choice}，重新刷新救援列表。')
+            r = self._scan_lv()
         return False
 
-    # 寻找需要打架的等级，找不到时由外层刷新列表后重试
-    def find_lv(self):
+    def _scan_lv(self):
         level_pictures = {
             level: f'./aim/quests/link_raid/backup_requests/lv/lv{level}/lv{level}'
             for level in (4, 6, 7, 8, 9, 10, 11, 12)
         }
-        # 往下拉 3 次用于寻找
-        find_time = 4
-        # 这个判断对应等级是否存在，1 是没找到，2 是找到了默认设置没找到，进入第一次循环
-        self.level_choice_exist = 1
-
-        while self._running() and find_time > 1 and self.level_choice_exist == 1:
-            self.level_choice_exist = click_action.find_competing_item_with_result(
+        found = click_action.find_competing_item_with_result(
+            self, self.level_choice, level_pictures, f'lv{self.level_choice}'
+        )
+        if found == 2:
+            self.signal.emit(str(f'lv{self.level_choice}找到了，下一步是选择'))
+            if not self._running():
+                return 1
+            result = click_action.click_competing_item_with_result(
                 self, self.level_choice, level_pictures, f'lv{self.level_choice}'
             )
-            if self.level_choice_exist == 2:
-                self.signal.emit(str(f'lv{self.level_choice}找到了，下一步是选择'))
-            else:
-                find_time = find_time - 1
-                self.signal.emit(str(f'lv{self.level_choice}没有找到，往下拉动，还有的寻找次数为{find_time - 2}'))
-                if not self._running():
-                    return False
-                click_action.move_a_to_b_scaled(1400, 1200, 1400, 400, self._running)
-                if self._wait(4):
-                    return False
-                self.signal.emit(str(f'往下移动完成'))
+            if result == 2:
+                self.signal.emit(str(f'lv{self.level_choice}点击完成'))
+                return 2
+            self.signal.emit(str(f'lv{self.level_choice}点击失败，将刷新列表'))
+            return 1
+        no_lv = click_action.find_item_with_result(
+            self, './aim/quests/link_raid/backup_requests/lv/no_lv', 'no_lv'
+        )
+        if no_lv == 2:
+            self.signal.emit(str(f'当前列表无 lv{self.level_choice}（no_lv），将刷新救援列表'))
+            return 1
+        self.signal.emit(str(f'未找到 lv{self.level_choice} 且未发现 no_lv，将下拉查找'))
+        return 0
 
-        if self.level_choice_exist == 2:
-            if self._running():  # 这里不可以用 while，只能运行一遍
-                result = click_action.click_competing_item_with_result(
-                    self, self.level_choice, level_pictures, f'lv{self.level_choice}'
-                )
-                if result == 2:
-                    self.signal.emit(str(f'lv{self.level_choice}点击完成'))
-                    return True
-                else:
-                    self.signal.emit(str(f'lv{self.level_choice}点击失败，将重新刷新列表'))
-                result = 1
+    # 下拉查找目标等级：最多下拉 3 次，每次查找 lv 和 no_lv。
+    # 返回：2=找到并点击，1=发现 no_lv 或下拉耗尽（需刷新）
+    def _find_lv_by_scroll(self):
+        for _ in range(3):
+            if not self._running():
+                return 1
+            click_action.move_a_to_b_scaled(1400, 1200, 1400, 400, self._running)
+            if self._wait(4):
+                return 1
+            self.signal.emit(str(f'下拉完成，继续查找 lv{self.level_choice}'))
+            r = self._scan_lv()
+            if r != 0:
+                return r
+        self.signal.emit(str(f'下拉 3 次仍未找到 lv{self.level_choice} 或 no_lv，将刷新救援列表'))
+        return 1
 
-        # 这个判断对应等级是否存在，1 是没找到，2 是找到了
-
-        if self.level_choice_exist == 1:
-            self.signal.emit(str(f'lv{self.level_choice}没有找到，不会加入其它等级'))
-        else:
-            self.signal.emit(str(f'lv{self.level_choice}找到了，下一步是选择'))
-
-        result = 1
-        # 当需要点击的等级存在，点击相应等级，只过一遍，不循环，这里不会卡
-        return False
-
-    # 加入战斗，需要点击 join 和 play 两个，接下来就会又各种情况判定，因为体力会满，战斗会结束
     def join_battle(self):
         result = 1
 
-        # 点击 join 进入到选人的界面
+        # 点击 join 进入到选人的界面（next_steps 含 already_end：点击 join 后战斗可能已结束）
+        join_next_steps = (
+            ('./aim/quests/link_raid/backup_requests/no_lp/no_lp', 'no_lp'),
+            ('./aim/quests/link_raid/backup_requests/join/play', 'play'),
+            ('./aim/quests/link_raid/backup_requests/join/full/already_end', 'already_end'),
+        )
         result = self._click_until(
             './aim/quests/link_raid/backup_requests/join', 'join',
-            next_steps=(
-                ('./aim/quests/link_raid/backup_requests/no_lp/no_lp', 'no_lp'),
-                ('./aim/quests/link_raid/backup_requests/join/play', 'play'),
-            ),
+            next_steps=join_next_steps,
         )
         if result == 2:
             self.signal.emit(str('join点击完成'))
         result = 1
+
+        # 点击 join 后可能直接弹出 already_end（战斗已结束）：点 ok 后重新匹配并加入
+        while self._running():
+            if self._wait(0.2):
+                return
+            self.already_end = click_action.find_item_with_result(
+                self, './aim/quests/link_raid/backup_requests/join/full/already_end', 'already_end'
+            )
+            if self.already_end != 2:
+                break
+            self.signal.emit(str('点击 join 后战斗已结束，点 ok 后重新匹配加入'))
+            result = self._click_until('./aim/quests/link_raid/backup_requests/join/ok', 'ok')
+            if result == 2:
+                self.signal.emit(str('ok点击完成'))
+            result = 1
+            if not self.prepare_matching_battle():
+                return
+            result = self._click_until(
+                './aim/quests/link_raid/backup_requests/join', 'join',
+                next_steps=join_next_steps,
+            )
+            if result == 2:
+                self.signal.emit(str('join点击完成'))
+            result = 1
+
+        if not self._running():
+            return
 
         # 判断体力是否耗尽，正常情况应该是 1，耗尽会变成 2
         if self._wait(0.2):
@@ -423,7 +457,6 @@ class LinkRaidWorker(BaseWorker):
             self.signal.emit(str('play点击完成'))
         result = 1
 
-    # 判断当前战斗是否结束，结束了点一下刷新
     def check_already_end(self):
         # 防止延迟问题
         if self._wait(0.9):
