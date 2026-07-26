@@ -19,8 +19,8 @@ crystalis/result_9.png = 0.85
 crystalis/result_10.png = 0.85
 crystalis/result_11.png = 0.85
 crystalis/result_12.png = 0.85
-crystalis/retry_1.png = 0.80
-crystalis/retry_2.png = 0.80
+crystalis/retry_1.png = 0.90
+crystalis/retry_2.png = 0.90
 
 # Link Raid
 quests/link_raid_1.png = 0.80
