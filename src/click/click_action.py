@@ -103,24 +103,28 @@ def _confirm_stable_detection(self, detect_once, accepted, position, name, confi
 
 
 #尝试点击一次，查询组内所有图片，返回点击结果return
-def click_item_with_result(self, picture, name):
+def click_item_with_result(self, picture, name, search_region=None, match_threshold=None):
     files = _template_files(picture)
     can_click = getattr(self, '_running', None)
+    threshold = click_behavior.MATCH_THRESHOLD if match_threshold is None else match_threshold
     if can_click is not None and not can_click():
         return 1
     if not files or not _wait_for_user(can_click):
         return 1
     confirmed = _confirm_stable_detection(
         self,
-        lambda: click_behavior.best_template_match(files),
+        lambda: click_behavior.best_template_match(files, search_region=search_region),
         lambda detected: detected[0] is not None
-        and detected[1] > click_behavior.MATCH_THRESHOLD,
+        and detected[1] > threshold,
         lambda detected: detected[0],
         name,
-        lambda first: click_behavior.best_template_match([Path(first[2])]),
+        lambda first: click_behavior.best_template_match(
+            [Path(first[2])], search_region=search_region,
+        ),
     )
     if confirmed is None:
-        logger.debug('比较了%s个模板，%s未通过0.6秒三次采样稳定性确认', len(files), name)
+        logger.debug('比较了%s个模板，%s未通过阈值%.2f与0.6秒三次稳定性确认',
+                     len(files), name, threshold)
         if _wait(self, 0.4):
             return 1
         return 1

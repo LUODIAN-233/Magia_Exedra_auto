@@ -1,12 +1,12 @@
 <div align="center">
   <h1>Magia Exedra 自动挂机</h1>
-  <p>基于图像识别的 <strong>Magia Exedra</strong> Windows 游戏自动化工具</p>
-  <p>支持 Link Raid 与晶花自动挂机，以及英语/日语、多分辨率模板切换</p>
+  <p>面向 Windows 的 Magia Exedra 图像识别自动化工具</p>
+  <p>支持 Link Raid、晶花、英语/日语模板与多分辨率窗口</p>
   <p>
-    <img alt="Platform" src="https://img.shields.io/badge/平台-Windows-blue">
-    <img alt="Python" src="https://img.shields.io/badge/Python-3.x-blue">
-    <img alt="Qt" src="https://img.shields.io/badge/GUI-PySide6-green">
-    <img alt="License" src="https://img.shields.io/badge/用途-游戏辅助-orange">
+    <img alt="Platform" src="https://img.shields.io/badge/平台-Windows-0078D4">
+    <img alt="Architecture" src="https://img.shields.io/badge/架构-x86--64-555555">
+    <img alt="GUI" src="https://img.shields.io/badge/界面-PySide6-41CD52">
+    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release" src="https://img.shields.io/github/v/release/LUODIAN-233/Magia_Exedra_auto?include_prereleases&label=版本"></a>
   </p>
   <p>
     <a href="./README.md">简体中文</a> · <a href="./README_EN.md">English</a> · <a href="./README_JP.md">日本語</a>
@@ -15,114 +15,77 @@
 
 ---
 
-## 功能
+## 下载与启动
 
-| 模式 | 说明 |
-|:----:|:-----|
-| **Link Raid** | 自动进入求援列表、刷新、寻找 LV4 或 LV6-LV12 队伍、清理结束战斗、加入战斗并点赞 |
-| **晶花** | 自动点击 `play`、等待结算并通过 `retry` 重复刷关 |
+1. 前往 [GitHub Releases](https://github.com/LUODIAN-233/Magia_Exedra_auto/releases) 下载最新的 Windows ZIP。
+2. 将 ZIP **完整解压**到一个普通文件夹。
+3. 运行根目录中的 `Magia_Exedra_auto.exe`。
 
-- 两种模式都可设置体力药使用次数；次数用完后自动停止
-- 支持英语、日语模板，以及 `720p` / `1080p` / `2K` / `4K`
-- 同一模板组使用同一帧比较全部编号变体，只点击窗口内匹配率最高的候选
-- 模板点击前会在 0.6 秒内采样 3 次，三次识别成功且中心位置稳定才点击；确认期间不会移动鼠标
-- 普通界面等待 60 秒、战斗等待 30 分钟仍未识别到目标时安全停止
-- 启动前检测游戏客户区并自动选择最匹配的可用模板分辨率，再检查必需模板
-- 检测到键盘操作或大幅移动鼠标时自动暂停，用户停止操作 5 秒后继续
-- 等待点击模板期间每连续 5 秒未匹配到目标，就观察游戏客户区 2 秒；游戏画面变化超过 50% 时按战斗处理并跳过本轮恢复点击，否则在脚本上一次操作位置点击一次。对于已声明下一步的流程，正常点击或恢复点击后都必须识别到下一步才算成功；下一步未出现但当前步骤仍存在时会冗余点击，之后继续按 5 秒周期检测
-- 主界面的「设置」入口集中管理 GUI 日志等级、beta 更新通道和手动更新检查
-- GUI 日志等级会保存到 `settings.json`，下次启动自动恢复
-- 支持 stable / beta 更新检查；发行版可安全下载和安装通过校验的更新包
-- 当前版本为预发布版时，会默认勾选「更新至 beta 版」并使用 beta 通道自动检查更新
+> [!IMPORTANT]
+> 不要只复制 EXE。程序还需要同级的 `_internal/`、`resource/`、`language/` 和 `tools/`。
 
-## 下载
+## 两种挂机模式
 
-从 [GitHub Releases](https://github.com/LUODIAN-233/Magia_Exedra_auto/releases) 下载完整 ZIP，解压后运行根目录的 `Magia_Exedra_auto.exe`。
+| 模式 | 开始前停留界面 | 可调参数 | 自动执行 |
+|:-----|:---------------|:---------|:---------|
+| **Link Raid** | 游戏主界面（灯台界面） | LV4 或 LV6-LV12、体力药次数 | 进入求援、刷新、选择指定等级、加入战斗、清理结算与点赞 |
+| **晶花** | 已选好关卡和队伍，点击 `play` 即可开战 | 体力药次数 | 开始战斗、等待结算、点击 `retry` 并继续周回 |
 
-> **不要只复制单个 EXE。** 发行包还需要同级的 `_internal/`、`resource/`、`language/` 和 `tools/`。
+脚本找不到目标、等待超时或体力药次数用完时会安全停止。Link Raid 不会在所选等级缺失时改加入其它等级。
 
-## 源码运行
+## 第一次使用
 
-从源码运行需先安装依赖，再执行入口：
+1. 以窗口模式启动游戏，并让游戏画面保持完整可见。
+2. 启动本工具，等待模板列表刷新完成；选择游戏语言，分辨率会按游戏客户区自动匹配。
+3. 选择「挂机模式」，设置参数，然后点击「启动挂机」。
 
-```bash
-pip install -r requirements.txt
-python main.py
-```
+运行期间如需操作电脑，可直接使用键盘或移动鼠标；脚本会暂停，并在连续 5 秒无用户操作后继续。点击「停止挂机」可结束当前任务。
 
-详细的运行与构建说明见 [Wiki · 源码运行与构建](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/源码运行与构建)。
+> [!NOTE]
+> 如果模板状态提示未检测到游戏，请先确认游戏窗口标题为 `MadokaExedra`，且游戏已经完成启动。
 
-## 快速开始
+## 关键设置
 
-### Link Raid
-
-1. 让游戏停留在主界面（灯台界面）。
-2. 在「选择挂机脚本」中选择「link raid挂机启动」。
-3. 设置等级和体力药次数。
-4. 点击「启动：link raid挂机启动」。
-
-> 所选 LV4 或 LV6-LV12 不存在时，脚本会刷新求援列表后重新搜索，不会加入其它等级。
->
-> 等级识别会在同一候选位置比较 LV4 与 LV6-LV12，并独立比较中央的等级数字区域；只有整图和数字区域的最高匹配等级都等于所选等级时才会点击，避免公共背景使 LV6、LV11、LV12 等模板误匹配到其它等级。
->
-> 正常结算或清理已结束战斗时，脚本只会在成功点击 `tap_to_countinue` 后检查并执行可用点赞；点击 `joined_battles` 本身不会触发点赞。
-
-### 晶花
-
-1. 选择好关卡和队伍，停留在点击 `play` 即可开战的界面。
-2. 在「选择挂机脚本」中选择「自动刷晶花，需要在play界面启动」。
-3. 设置体力药次数。
-4. 点击「启动：自动刷晶花，需要在play界面启动」。
-
-> 点击「停下当前运行的脚本」可以请求停止当前任务。
-
-## 模板设置
-
-- 语言在下拉框中选择后自动切换；分辨率无需手动设置
-- 程序会记住最后选择的游戏语言；启动时检测游戏窗口，未运行时会在模板状态中提示
-- 启动挂机时会根据游戏客户区自动选择 `720p` / `1080p` / `2K` / `4K` 模板
-- 界面中的「英语」「日语」对应 `EN` / `JP`
-- 「（空）」表示该模板包当前不可用
-- 程序每次启动都会刷新模板列表，并从 2K 原始模板增量生成 `720p` / `1080p` / `4K` 模板；「刷新列表」可用于手动重刷
-- 派生模板使用适合游戏实时缩放的插值；升级后的首次启动会自动检查并重建失效模板
-- 未知分辨率或对应模板不可用时会阻止挂机启动
+| 设置 | 说明 |
+|:-----|:-----|
+| 游戏语言 | 支持英语与日语，程序会记住最后选择 |
+| 分辨率 | 自动识别并选择 `720p` / `1080p` / `2K` / `4K` 模板，无需手动选择 |
+| 日志等级 | 新安装默认 `INFO`；该设置同时控制 GUI 调试记录与 `logs/` 文件 |
+| 日志保留 | 默认 7 天，可设为 1-365 天；启动时自动清理，也可手动清理过时日志 |
+| beta 更新 | 预发布版本默认启用 beta 更新通道，可在「设置」中调整 |
 
 ## 使用须知
 
-- 仅支持 Windows x86-64 / AMD64 窗口化游戏
-- 游戏窗口必须保持可见，不能被其他窗口遮挡识图区域
-- 程序会激活游戏窗口并使用全局鼠标；检测到键盘或大幅鼠标操作时会暂停，但正在进行的单次鼠标动作无法中途打断
-- 坐标换算支持 `720p` / `1080p` / `2K` / `4K`，但实际识图效果仍受 DPI、窗口尺寸和模板质量影响
-- JP 服务器可在游戏内切换到 EN，从而复用英语模板
-- 运行时日志会滚动写入程序根目录的 `logs/` 文件夹；GUI 的「GUI 日志等级」可控制调试日志显示，源码控制台可用环境变量 `MAGIA_LOG_LEVEL=DEBUG` 调整等级
-- 发行版以无控制台窗口模式运行；请通过 GUI 日志框或 `logs/` 文件排查问题
+- 仅支持 Windows x86-64 / AMD64 和窗口模式游戏。
+- 游戏窗口必须保持可见，识图区域不能被其它窗口遮挡。
+- 工具会激活游戏窗口并使用全局鼠标；启动挂机前请确认起始界面正确。
+- 实际识别效果会受到游戏语言、窗口尺寸、DPI 和模板质量影响。
+- 本工具仅供学习交流，请遵守游戏服务条款并自行承担使用风险。
 
-## Wiki
+## 遇到问题
 
-源码运行、构建发布、项目架构、模板制作、自动更新安全机制和开发约定已移至 Wiki。Wiki 现已支持多语言：
+| 现象 | 先检查 |
+|:-----|:-------|
+| 未检测到游戏 | 游戏是否已启动、窗口标题是否为 `MadokaExedra` |
+| 模板显示「（空）」 | 等待启动刷新完成，或点击「刷新列表」重新生成模板 |
+| 无法启动挂机 | 游戏语言、窗口分辨率、起始界面和必需模板是否匹配 |
+| 识别异常或误点击 | 保持窗口无遮挡，将日志等级设为 `DEBUG` 后复现并查看 `logs/` |
 
-| 语言 | 入口 |
-|:----:|:-----|
-| 简体中文 | [Wiki 首页](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki) |
-| English | [Wiki Home (EN)](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/Home_EN) |
-| 日本語 | [Wiki ホーム](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/ホーム) |
+更完整的操作说明、识别保护机制和故障排查见 [Wiki · 使用指南](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/使用指南)。
 
-中文 Wiki 文档：
+## 文档
 
-- [源码运行与构建](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/源码运行与构建)
-- [项目架构](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/项目架构)
-- [模板包与分辨率](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/模板包与分辨率)
-- [自动更新与发布](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/自动更新与发布)
-- [开发约定](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/开发约定)
+| 内容 | 入口 |
+|:-----|:-----|
+| 普通用户操作与排查 | [使用指南](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/使用指南) |
+| 从源码运行与构建 | [源码运行与构建](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/源码运行与构建) |
+| 模板制作与分辨率 | [模板包与分辨率](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki/模板包与分辨率) |
+| 架构、开发和发布 | [Wiki 首页](https://github.com/LUODIAN-233/Magia_Exedra_auto/wiki) |
 
 ## 鸣谢
 
 | 贡献者 | 贡献内容 |
 |:------:|:---------|
 | **TIAN000000** | v1.0.0+ 脚本整体思路及后续维护 |
-| **洛殿** | v1.0.0+ 部分日语素材及分辨率缩放方案<br>v2.0.0+ 提供算力支撑及日语素材 |
-| **智谱AI** | v2.0.0+ 完全由 GLM-5.2 重写并构建 |
-
----
-
-> 本脚本仅供学习交流使用，请遵守游戏服务条款。使用本脚本产生的后果由使用者自行承担。
+| **洛殿** | v1.0.0+ 部分日语素材及分辨率缩放方案；v2.0.0+ 算力支撑及日语素材 |
+| **智谱AI** | v2.0.0+ 由 GLM-5.2 完成重写与构建 |

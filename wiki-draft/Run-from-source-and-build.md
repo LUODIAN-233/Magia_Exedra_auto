@@ -31,7 +31,7 @@ python main.py
 
 `main.py` is the entry point. On startup it changes the working directory to the script directory so relative runtime paths (`./aim/...`, `./resource/...`) resolve correctly. Startup calls `language_switcher.ensure_active()`, which restores or creates the `aim/` directory junction.
 
-Startup also calls `log_setup.configure_logging()` to configure logging. The GUI log level can be selected at runtime from DEBUG / INFO / WARNING / ERROR / CRITICAL; windowed builds provide logs through the GUI and rotating DEBUG files under `logs/`. When running from source, the console defaults to WARNING and above (so image-recognition retries do not spam), and `MAGIA_LOG_LEVEL` controls its level; for example, set `MAGIA_LOG_LEVEL=DEBUG` to show all log output.
+Startup also calls `log_setup.configure_logging()`. The GUI offers DEBUG / INFO / WARNING / ERROR / CRITICAL; new installations default to INFO, and the selection controls both GUI debug records and files under `logs/`. Logs are retained for seven days by default, can be set from 1-365 days, and are cleaned automatically at startup. When running from source, the console defaults to WARNING and above; `MAGIA_LOG_LEVEL=DEBUG` enables all console output.
 
 ## Packaging
 

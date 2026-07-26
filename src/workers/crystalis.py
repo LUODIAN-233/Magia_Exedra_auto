@@ -17,6 +17,9 @@ from .registry import register, ParamSpec
 
 logger = logging.getLogger(__name__)
 
+RESULT_SEARCH_REGION = (0.5, 0.0, 1.0, 1.0)
+RESULT_MATCH_THRESHOLD = 0.85
+
 
 @register(
     'crystalis',
@@ -93,7 +96,14 @@ class CrystalisWorker(BaseWorker):
         deadline = time.monotonic() + BATTLE_TIMEOUT
         while check_win == 1 and self._running() and time.monotonic() < deadline:
             # 战斗结束后，右上角会出现 result，点击整个右侧屏幕的任何地方几次就会让它出现 retry
-            result = click_action.click_item_with_result(self, './aim/crystalis/result', 'result')
+            #result 的有效位置在客户区右侧；排除标题栏和左侧静态画面的持续假阳性。
+            result = click_action.click_item_with_result(
+                self,
+                './aim/crystalis/result',
+                'result',
+                search_region=RESULT_SEARCH_REGION,
+                match_threshold=RESULT_MATCH_THRESHOLD,
+            )
             if result == 2:
                 self.signal.emit(str('result点击完成，点了之后会出现retry'))
             else:

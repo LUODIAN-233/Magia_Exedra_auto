@@ -43,7 +43,7 @@ main.py -> src/update_check
 - Lazily builds one worker and parameter page per `WorkerMeta`; no worker class is hardcoded in the GUI
 - `_start_worker()` rejects concurrent tasks, unresolved update-recovery markers, missing game windows, unknown/mismatched client resolution, incomplete required template groups, and invalid parameters; it reads GUI parameters before expanding dynamic required-template paths
 - Resolution mismatch is a hard block
-- The GUI has a dedicated `logging` handler with a runtime-selectable DEBUG/INFO/WARNING/ERROR/CRITICAL threshold, defaulting to WARNING; worker `signal.emit` user messages are unaffected by this filter
+- The GUI has a dedicated `logging` handler with a runtime-selectable DEBUG/INFO/WARNING/ERROR/CRITICAL threshold, defaulting to INFO on new installations; the same selection controls the file handler. Worker `signal.emit` messages remain visible as INFO and are mirrored to files with a GUI-deduplication marker
 - New builds use PyInstaller `--windowed` and no longer show an empty companion console; compatibility with old console-mode builds hides an existing console
 - `closeEvent()` uses one shared 12-second deadline to stop/wait for workers, scaling, update checks, and update preparation
 - Update signals include a task ID so stale thread results are ignored
@@ -109,7 +109,7 @@ Prerelease-aware update checking and frozen-app updating. Reading remains compat
 
 ## src/log_setup.py
 
-Stdlib-only logging configuration called once at `main.py` import, before `QApplication`. When stderr exists, the console handler defaults to WARNING and `MAGIA_LOG_LEVEL` can override its level; `--windowed` builds safely skip the console handler when stderr is absent. A rotating DEBUG file handler writes to `logs/`. `main.py` separately installs a GUI handler that defaults to WARNING and supports runtime level switching. Worker `signal.emit` calls remain an unfiltered user-message channel, unaffected by the GUI handler threshold and not replaced by `logging`; runtime `print()` calls have been migrated to `logging.getLogger(__name__)`.
+Stdlib-only logging configuration called once at `main.py` import, before `QApplication`. When stderr exists, the console defaults to WARNING and `MAGIA_LOG_LEVEL` can override it; `--windowed` builds safely skip a missing console. Before business imports, the file handler reads `settings.json`, defaults to INFO for new installations, and follows the GUI selector. Worker `signal.emit` messages still display directly in the GUI and are mirrored as `magia.runtime` INFO records with a deduplication marker. Pillow's per-PNG-block DEBUG output is suppressed. Retention defaults to seven days, supports 1-365 days, and startup removes only strictly named expired Magia logs while retaining the active log family.
 
 ## src/input_activity.py
 

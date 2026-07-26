@@ -110,13 +110,39 @@ def _capture_game_window():
     window = find_win('MadokaExedra')
     if window is None:
         return None, None
-    left, top, width, height = window
+    region = get_client_region('MadokaExedra')
+    if region is None:
+        return None, None
+    left, top, width, height = region
     try:
-        screenshot = pyautogui.screenshot(region=window)
+        screenshot = pyautogui.screenshot(region=region)
         return cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR), (left, top)
     except Exception as e:
-        logger.warning('游戏窗口截图失败: %s', e)
+        logger.warning('游戏客户区截图失败: %s', e)
         return None, None
+
+
+def _crop_search_region(screen, origin, search_region):
+    """按客户区归一化坐标裁剪搜索范围，并同步修正屏幕坐标原点。"""
+    if search_region is None:
+        return screen, origin
+    try:
+        left_ratio, top_ratio, right_ratio, bottom_ratio = map(float, search_region)
+    except (TypeError, ValueError):
+        logger.warning('模板搜索区域格式无效: %r', search_region)
+        return None, None
+    if not (0 <= left_ratio < right_ratio <= 1
+            and 0 <= top_ratio < bottom_ratio <= 1):
+        logger.warning('模板搜索区域超出客户区: %r', search_region)
+        return None, None
+    height, width = screen.shape[:2]
+    left = round(width * left_ratio)
+    top = round(height * top_ratio)
+    right = round(width * right_ratio)
+    bottom = round(height * bottom_ratio)
+    if right <= left or bottom <= top:
+        return None, None
+    return screen[top:bottom, left:right], (origin[0] + left, origin[1] + top)
 
 
 def _match_one(match_screen, template):
@@ -135,9 +161,12 @@ def _match_one(match_screen, template):
     return min_loc, (width, height), score
 
 
-def best_template_match(template_paths):
+def best_template_match(template_paths, search_region=None):
     """在同一帧中比较整组模板，返回全局最高分的 (坐标, 分数, 路径)。"""
     screen, origin = _capture_game_window()
+    if screen is None:
+        return None, 0.0, None
+    screen, origin = _crop_search_region(screen, origin, search_region)
     if screen is None:
         return None, 0.0, None
     # 整组候选共享同一张截图和预处理结果，保证分数可比并避免重复处理全窗口。

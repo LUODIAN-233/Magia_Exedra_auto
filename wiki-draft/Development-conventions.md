@@ -30,9 +30,10 @@ Language: [简体中文](./首页) · [English](./Home_EN) · [日本語](./ホ�
 ## Logging
 
 - Use `logging.getLogger(__name__)` for runtime debug output, not `print()`
-- The GUI logging handler provides a runtime DEBUG/INFO/WARNING/ERROR/CRITICAL level selector; the file handler always writes DEBUG-level logs under `logs/`
+- The GUI logging handler provides a runtime DEBUG/INFO/WARNING/ERROR/CRITICAL selector; new installations default to INFO, and the same selection controls the file handler under `logs/`
 - When a console exists it defaults to WARNING, and `MAGIA_LOG_LEVEL` can override that level. A `--windowed` build has no console, so missing stderr must be skipped safely without affecting GUI startup
-- Worker user-facing status messages still go through `signal.emit` (the GUI log box). They are not filtered by GUI or console logging levels and must not be replaced with `logging`
+- Worker user-facing messages still go through `signal.emit` and remain visible in the GUI. The main window mirrors them as `magia.runtime` INFO records with a GUI-deduplication marker; new channels must not cause duplicate display
+- Retention defaults to seven days and accepts 1-365. Cleanup may remove only strictly named expired Magia logs and must retain the active file-handler family and unrelated files
 - `if __name__ == "__main__"` diagnostic blocks may keep `print`; that is CLI direct output, not runtime noise
 
 ## GUI parameters

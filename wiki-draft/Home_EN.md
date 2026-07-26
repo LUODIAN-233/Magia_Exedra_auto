@@ -8,6 +8,7 @@ Language: [简体中文](./首页) · [English](./Home_EN) · [日本語](./ホ�
 
 | Document | Description |
 |:---------|:------------|
+| [User guide](./User-guide) | Download, mode workflows, settings, recognition safeguards, and troubleshooting |
 | [Run from source and build](./Run-from-source-and-build) | Running from source, installing dependencies, and PyInstaller packaging |
 | [Architecture](./Architecture) | Module layout, call relationships, and key conventions |
 | [Template packs and resolutions](./Template-packs-and-resolutions) | Template organization, the `aim` junction, and multi-resolution scaling |
@@ -27,7 +28,8 @@ Automation pauses when the user operates the keyboard or mouse and resumes after
 
 ## Quick Navigation
 
-- First-time users should start with [Run from source and build](./Run-from-source-and-build)
+- First-time users should start with the [User guide](./User-guide)
+- To run from source, read [Run from source and build](./Run-from-source-and-build)
 - For development, read [Architecture](./Architecture) and [Development conventions](./Development-conventions)
 - For template issues, read [Template packs and resolutions](./Template-packs-and-resolutions)
 - For releasing a new version, read [Automatic updates and releases](./Automatic-updates-and-releases)

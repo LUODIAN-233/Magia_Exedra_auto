@@ -32,7 +32,7 @@ if getattr(sys, "frozen", False):
 
 #日志要在业务模块导入前配置好，后续所有 logger 才能被统一 handler 接管。
 #MAGIA_LOG_LEVEL 环境变量可覆盖控制台级别（默认 WARNING，开发时设 DEBUG 看全部）。
-from src.log_setup import configure_logging
+from src.log_setup import cleanup_old_logs, configure_logging, set_file_log_level
 configure_logging()
 
 from datetime import datetime
@@ -41,16 +41,18 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QRadioBu
                                QPlainTextEdit, QWidget, QPushButton, QLabel, QLineEdit,
                                QComboBox, QSizePolicy, QStackedWidget, QVBoxLayout,
                                QMessageBox, QProgressDialog, QCheckBox, QGroupBox,
-                               QDialog, QDialogButtonBox, QFormLayout)
+                               QDialog, QDialogButtonBox, QFormLayout, QSpinBox)
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QIcon, QIntValidator
 
 #其他自己写的文件
 from src.packs import language_switcher, image_scaler
-from src.app_settings import (GUI_LOG_LEVELS, load_gui_log_level,
-                              save_gui_log_level)
+from src.app_settings import (GUI_LOG_LEVELS, load_automation_mode, load_log_level,
+                              load_log_retention_days, save_automation_mode,
+                              save_log_level, save_log_retention_days)
 
 logger = logging.getLogger(__name__)
+runtime_logger = logging.getLogger('magia.runtime')
 
 
 class GuiLogHandler(logging.Handler):
@@ -60,7 +62,11 @@ class GuiLogHandler(logging.Handler):
 
     def emit(self, record):
         try:
-            self.emit_log(self.format(record))
+            #运行消息已经直接显示到 GUI，只需继续交给文件/控制台 handler。
+            if getattr(record, '_magia_gui_displayed', False):
+                return
+            timestamp = datetime.fromtimestamp(record.created).strftime('%H:%M:%S')
+            self.emit_log(timestamp, record.levelname, record.name, self.format(record))
         except (RuntimeError, RecursionError):
             pass
 
@@ -78,7 +84,7 @@ class CurrentPageStack(QStackedWidget):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, initial_log_level, beta_checked, parent=None):
+    def __init__(self, initial_log_level, retention_days, beta_checked, parent=None):
         super().__init__(parent)
         self.setObjectName('settingsDialog')
         self.setWindowTitle('设置')
@@ -88,17 +94,28 @@ class SettingsDialog(QDialog):
         self.logLevelCombo = QComboBox()
         self.logLevelCombo.addItems(GUI_LOG_LEVELS)
         self.logLevelCombo.setCurrentText(initial_log_level)
+        self.logLevelCombo.setToolTip(
+            '同步控制 GUI 调试记录和 logs 文件；INFO/DEBUG 会记录完整挂机流程'
+        )
+        self.retentionSpin = QSpinBox()
+        self.retentionSpin.setRange(1, 365)
+        self.retentionSpin.setValue(retention_days)
+        self.retentionSpin.setSuffix(' 天')
+        self.retentionSpin.setToolTip('程序启动时自动删除超过该天数的历史日志')
         self.betaCheckBox = QCheckBox('更新至 beta 版')
         self.betaCheckBox.setChecked(beta_checked)
         self.betaCheckBox.setToolTip(
             '勾选后检查更新会包含预发布（beta）版本；不勾选则只更新到正式版'
         )
         self.checkUpdateBtn = QPushButton('立即检查更新')
+        self.cleanLogsBtn = QPushButton('清理过时日志')
+        self.cleanLogsBtn.setToolTip('删除此前会话的 Magia 日志，保留当前会话日志')
 
         form = QFormLayout()
         form.setHorizontalSpacing(14)
         form.setVerticalSpacing(12)
-        form.addRow('GUI 日志等级', self.logLevelCombo)
+        form.addRow('日志等级', self.logLevelCombo)
+        form.addRow('日志保留', self.retentionSpin)
         form.addRow('', self.betaCheckBox)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
@@ -109,7 +126,11 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(18, 18, 18, 16)
         layout.setSpacing(14)
         layout.addLayout(form)
-        layout.addWidget(self.checkUpdateBtn)
+        action_row = QHBoxLayout()
+        action_row.setSpacing(10)
+        action_row.addWidget(self.cleanLogsBtn)
+        action_row.addWidget(self.checkUpdateBtn)
+        layout.addLayout(action_row)
         layout.addWidget(buttons)
         self.setLayout(layout)
 
@@ -327,7 +348,7 @@ class mywindow(QWidget):
     updateProgress = Signal(str, int, int)
     updateReady = Signal(str, object)
     updateFailed = Signal(str, str)
-    debugLog = Signal(str)
+    debugLog = Signal(str, str, str, str)
     def __init__(self):
         super().__init__()
 
@@ -359,14 +380,13 @@ class mywindow(QWidget):
         self.textedit_1.setMinimumHeight(150)
         self.textedit_1.setPlaceholderText('运行消息会显示在这里')
         self.textedit_1.document().setMaximumBlockCount(2000)
-        self.debugLog.connect(self._append_raw_log)
-        initial_log_level = load_gui_log_level()
+        self.debugLog.connect(self._append_logging_record)
+        initial_log_level = load_log_level()
         self._gui_log_handler = GuiLogHandler(self.debugLog.emit)
         self._gui_log_handler.setLevel(getattr(logging, initial_log_level))
-        self._gui_log_handler.setFormatter(logging.Formatter(
-            '[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s', datefmt='%H:%M:%S',
-        ))
+        self._gui_log_handler.setFormatter(logging.Formatter('%(message)s'))
         logging.getLogger().addHandler(self._gui_log_handler)
+        set_file_log_level(initial_log_level)
 
         #遍历注册表，为每个挂机模式创建 worker 和参数页；下拉选择后只显示当前脚本的参数。
         self._entries = []
@@ -378,8 +398,12 @@ class mywindow(QWidget):
         self.paramStack = CurrentPageStack()
         self.paramStack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         for entry in self._entries:
-            self.scriptCombo.addItem(entry['meta'].label)
+            self.scriptCombo.addItem(entry['meta'].label, entry['meta'].name)
             self.paramStack.addWidget(entry['param_widget'])
+        remembered_mode = load_automation_mode()
+        remembered_index = self.scriptCombo.findData(remembered_mode)
+        if remembered_index >= 0:
+            self.scriptCombo.setCurrentIndex(remembered_index)
         self.scriptCombo.currentIndexChanged.connect(self._script_changed)
 
         self.startButton = QPushButton()
@@ -395,16 +419,21 @@ class mywindow(QWidget):
         #应用级选项集中放进设置对话框，主界面只保留一个入口。
         from src.update_check import VERSION, is_prerelease_version
         self.settingsDialog = SettingsDialog(
-            initial_log_level, is_prerelease_version(VERSION), self,
+            initial_log_level, load_log_retention_days(),
+            is_prerelease_version(VERSION), self,
         )
         self.logLevelCombo = self.settingsDialog.logLevelCombo
         self.betaCheckBox = self.settingsDialog.betaCheckBox
         self.checkUpdateBtn = self.settingsDialog.checkUpdateBtn
+        self.cleanLogsBtn = self.settingsDialog.cleanLogsBtn
+        self.retentionSpin = self.settingsDialog.retentionSpin
         self.settingsButton = QPushButton('设置')
         self.settingsButton.setFixedWidth(90)
         self.settingsButton.clicked.connect(self._open_settings)
         self.checkUpdateBtn.clicked.connect(self._check_update_from_settings)
+        self.cleanLogsBtn.clicked.connect(self._cleanup_old_logs)
         self.logLevelCombo.currentTextChanged.connect(self._change_log_level)
+        self.retentionSpin.valueChanged.connect(self._change_log_retention_days)
         self.updateChecked.connect(self._on_update_checked)
         self.updateProgress.connect(self._on_update_progress)
         self.updateReady.connect(self._on_update_ready)
@@ -566,6 +595,8 @@ class mywindow(QWidget):
         self.paramStack.updateGeometry()
         self.startButton.setText('启动挂机')
         self.startButton.setToolTip(self._entries[index]['meta'].label)
+        if not save_automation_mode(self._entries[index]['meta'].name):
+            logger.warning('保存挂机模式失败: %s', self._entries[index]['meta'].name)
 
     def _start_selected_worker(self):
         index = self.scriptCombo.currentIndex()
@@ -787,18 +818,76 @@ class mywindow(QWidget):
         self._update_cancel.clear()
         self._refresh_control_state()
 
-    def _append_log(self, text):
-        self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {text}")
+    def _append_gui_lines(self, timestamp, level, source, text):
+        #异常堆栈和其它多行消息也逐行带上完整前缀，便于筛选和复制排查。
+        lines = str(text).splitlines() or ['']
+        for line in lines:
+            self.textedit_1.appendPlainText(
+                f'[{timestamp}] [{level}] [{source}] {line}'
+            )
 
-    def _append_raw_log(self, text):
-        self.textedit_1.appendPlainText(text)
+    def _append_log(self, text, level='INFO', source='运行'):
+        level_name = str(level).strip().upper()
+        level_value = getattr(logging, level_name, logging.INFO)
+        message = str(text)
+        self._append_gui_lines(
+            datetime.now().strftime('%H:%M:%S'),
+            logging.getLevelName(level_value), source, message,
+        )
+        #运行消息在 GUI 中始终可见，同时按所选等级进入文件；额外标记防止 GUI handler 重复显示。
+        runtime_logger.log(
+            level_value, message,
+            extra={'_magia_gui_displayed': True, 'gui_source': source},
+        )
+
+    def _append_logging_record(self, timestamp, level, source, text):
+        self._append_gui_lines(timestamp, level, source, text)
 
     def _change_log_level(self, level):
         self._gui_log_handler.setLevel(getattr(logging, level))
-        if save_gui_log_level(level):
-            self._append_log(f'GUI 日志等级已切换并记忆为 {level}；用户操作消息不受过滤。')
+        file_enabled = set_file_log_level(level)
+        if save_log_level(level):
+            target = 'GUI 调试记录和日志文件' if file_enabled else 'GUI 调试记录'
+            self._append_log(f'日志等级已切换并记忆为 {level}，已应用到{target}；挂机运行消息始终显示。')
         else:
-            self._append_log(f'GUI 日志等级已切换为 {level}，但保存失败；下次启动将使用原设置。')
+            self._append_log(f'日志等级已切换为 {level}，但保存失败；下次启动将使用原设置。')
+
+    def _cleanup_old_logs(self):
+        retention_days = self.retentionSpin.value()
+        reply = QMessageBox.question(
+            self, '清理过时日志',
+            f'将删除超过 {retention_days} 天的 Magia 日志，当前会话日志会保留。\n\n是否继续？',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        result = cleanup_old_logs(retention_days)
+        removed_count = len(result['removed'])
+        failed_count = len(result['failed'])
+        if failed_count:
+            message = f'已清理 {removed_count} 个过时日志，另有 {failed_count} 个文件无法删除。'
+            QMessageBox.warning(self, '日志清理未完全完成', message)
+            self._append_log(message, level='WARNING', source='日志')
+        elif removed_count:
+            message = f'已清理 {removed_count} 个过时日志，当前会话日志已保留。'
+            QMessageBox.information(self, '日志清理完成', message)
+            self._append_log(message, source='日志')
+        else:
+            message = '没有需要清理的过时日志，当前会话日志已保留。'
+            QMessageBox.information(self, '日志清理完成', message)
+            self._append_log(message, source='日志')
+
+    def _change_log_retention_days(self, days):
+        if save_log_retention_days(days):
+            self._append_log(
+                f'日志保留天数已设为 {days} 天；下次启动时自动清理过期日志。',
+                source='日志',
+            )
+        else:
+            self._append_log(
+                f'日志保留天数已改为 {days} 天，但保存失败。',
+                level='WARNING', source='日志',
+            )
 
     def _build_param_widget(self, spec):
         #根据 ParamSpec.kind 生成对应控件，返回 (QLayout, getter函数, 可禁用控件列表)
