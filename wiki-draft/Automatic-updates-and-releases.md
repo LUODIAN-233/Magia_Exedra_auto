@@ -5,14 +5,14 @@ Language: [简体中文](./首页) · [English](./Home_EN) · [日本語](./ホ�
 ## Version numbering
 
 - Versions use explicit three-part SemVer, e.g. `2.2.0`, `2.2.0-beta`
-- `VERSION` (in `src/update_check.py`) has no `v` prefix; the tag is exactly `v{VERSION}`
+- `VERSION` (in `src/update/update_check.py`) has no `v` prefix; the tag is exactly `v{VERSION}`
 - Stable has no prerelease suffix and `prerelease=false`
 - Beta uses the confirmed suffix and `prerelease=true`
 - VERSION, tag, Release `tag_name`, and asset tag fragment must all agree
 
 ## Update checking
 
-`src/update_check.py` queries the GitHub Releases API for the latest release and compares it with the local `VERSION` using semantic version comparison.
+`src/update/update_check.py` queries the GitHub Releases API for the latest release and compares it with the local `VERSION` using semantic version comparison.
 
 - Downgrade protection: only when the remote version is strictly greater than the local version is an update reported
 - When the remote is less than or equal to local, it always reports "up to date" and never suggests a downgrade
@@ -52,7 +52,7 @@ Asset names are strict:
 1. Fetch remote branches/tags first and check for an existing same-name tag, Release, or asset. Never move a published tag
 2. Choose and record an ancestor release baseline. Stable normally uses the previous stable ancestor; beta uses the previous beta ancestor, or the nearest stable ancestor if no prior beta exists
 3. Review every commit and the full diff from baseline to release commit
-4. Update `src/update_check.py::VERSION` and version-specific docs, then run all applicable non-game checks
+4. Update `src/update/update_check.py::VERSION` and version-specific docs, then run all applicable non-game checks
 5. Build into a fresh output/staging directory with `pyinstaller -D --windowed -i resource/main.ico -n Magia_Exedra_auto main.py`; do not reuse old untracked `main.spec` or `dist/`
 6. Assemble by allowlist: new `Magia_Exedra_auto.exe` and `_internal/`, plus version-controlled runtime files under `resource/`, `language/`, and `tools/`. `Magia_Exedra_auto.exe` must be at the ZIP root. Exclude `aim/`, `active.json`, `.source_hashes.json`, locally generated derived PNGs, caches, Git/build metadata, and unrelated untracked files
 7. Verify ZIP CRC/entries, tracked pack placeholders, no runtime/generated files, and AMD64 PE. Run current `extract_update()` against the final ZIP and confirm its root/manifest. Confirm `find_asset()` uniquely identifies expected metadata

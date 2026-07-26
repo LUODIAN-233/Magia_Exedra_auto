@@ -8,8 +8,9 @@ import pyautogui
 import pywinctl as pwc
 from contextlib import nullcontext
 
+from . import template_confidence
+
 logger = logging.getLogger(__name__)
-MATCH_THRESHOLD = 0.8
 
 
 def _worker_from_callback(callback):
@@ -200,7 +201,7 @@ def best_competing_template_match(selected, template_groups, radius=3):
     """在所选候选位置分别比较整图和中央等级文字区域。"""
     screen, origin = _capture_game_window()
     if screen is None:
-        return None, None, None, 0.0, 0.0, None
+        return None, None, None, 0.0, 0.0, None, None
     match_screen = cv2.GaussianBlur(screen, (3, 3), 0)
     selected_best = None
     for path in template_groups.get(selected, ()):
@@ -215,7 +216,7 @@ def best_competing_template_match(selected, template_groups, radius=3):
         if selected_best is None or score > selected_best[0]:
             selected_best = score, location, size, str(path)
     if selected_best is None:
-        return None, None, None, 0.0, 0.0, None
+        return None, None, None, 0.0, 0.0, None, None
 
     selected_score, selected_location, selected_size, selected_path = selected_best
     best = selected_score, selected, selected_location, selected_size, selected_path
@@ -263,13 +264,13 @@ def best_competing_template_match(selected, template_groups, radius=3):
                 text_best = text_score, label, str(path)
     score, label, location, size, path = best
     if text_best is None:
-        return label, None, None, score, 0.0, path
+        return label, None, None, score, 0.0, path, None
     text_score, text_label, text_path = text_best
     avg = (origin[0] + selected_location[0] + selected_size[0] // 2,
            origin[1] + selected_location[1] + selected_size[1] // 2)
     logger.debug('所选候选位置整图最高: %s/%s %.4f；文字区域最高: %s/%s %.4f',
                  label, path, score, text_label, text_path, text_score)
-    return label, text_label, avg, score, text_score, path
+    return label, text_label, avg, score, text_score, path, text_path
 
 
 def get_xy(img_model_path):
@@ -321,7 +322,8 @@ def routine (img_model_path,name, can_click=None):
         return int(1)
     avg,match_rate= get_xy(img_model_path)
 
-    if avg is not None and match_rate > MATCH_THRESHOLD:
+    threshold = template_confidence.threshold_for(img_model_path)
+    if avg is not None and threshold is not None and match_rate > threshold:
         if can_click is not None and not can_click():
             logger.debug('任务已停止，不点击%s', name)
             return int(1)
@@ -347,7 +349,8 @@ def routine_only_find(img_model_path, name, can_find=None):
     if can_find is not None and not can_find():
         return int(1)
 
-    if avg is not None and match_rate > MATCH_THRESHOLD:
+    threshold = template_confidence.threshold_for(img_model_path)
+    if avg is not None and threshold is not None and match_rate > threshold:
         logger.debug('存在%s元素，不会点击', name)
         # click_auto(avg)
         return int(2)

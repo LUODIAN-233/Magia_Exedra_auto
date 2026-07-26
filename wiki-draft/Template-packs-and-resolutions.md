@@ -18,9 +18,15 @@ Source packs are `language/EN/EN_2560x1440` and `language/JP/JP_2560x1440`. Deri
 
 Template filenames use the `picture` argument, not `name`. Starting at `<picture>_1.png`, `click_item_with_result(self, picture, name)` and `find_item_with_result(...)` discover consecutively numbered templates until the first missing number. `name` is only a log label.
 
-Numbering must start at `_1` and remain contiguous. For example, under `crystalis/` you have `play_1.png`, `result_1.png` through `result_13.png`, `retry_1.png`, and so on.
+Numbering must start at `_1` and remain contiguous. For example, under `crystalis/` you have `play_1.png`, `result_1.png` through `result_12.png`, `retry_1.png`, and so on.
 
-All discovered variants in a template group are compared against one shared game frame, and only the globally highest-scoring candidate in the entire group is used. The code does not capture a new frame for each number or favor the first acceptable match. The screenshot and templates receive the same 3x3 `GaussianBlur` before OpenCV `TM_SQDIFF_NORMED` matching; the converted match score must be strictly `> 0.8`, so exactly `0.8` is not a match.
+All discovered variants in a template group are compared against one shared game frame, and only the globally highest-scoring candidate in the entire group is used. The code does not capture a new frame for each number or favor the first acceptable match. The screenshot and templates receive the same 3x3 `GaussianBlur` before OpenCV `TM_SQDIFF_NORMED` matching.
+
+## Per-image confidence
+
+`resource/template_confidence.txt` defines an independent threshold for every logical PNG. The base format is `relative/template/path = threshold`, for example `crystalis/result_1.png = 0.85`. A logical path applies to every language and derived resolution by default. More specific overrides may use `EN/path`, `JP/path`, or `EN/1920x1080/path`; precedence is language+resolution, language, then the generic path.
+
+Matching is always strict `score > threshold`; equality is not a match. Saving the file hot-reloads it on the next recognition attempt. Missing, duplicate, nonnumeric, or out-of-range 0.0-1.0 entries reject recognition instead of falling back to a global value. Task startup verifies that every PNG in the active pack resolves to a threshold. Add, remove, or rename the TXT entry together with its template.
 
 ## Resolution scaling
 
@@ -57,5 +63,6 @@ Recognition captures the visible game window, so the game must remain visible an
 - Never manually merge/rename `aim/` or edit derived templates as the source of truth. Add new templates such as LV4, and all other variants, only to the 2K source pack, then use Refresh to derive the other resolutions
 - Do not delete empty-pack `.gitkeep` placeholders. Missing pack directories are not recreated by the scaler
 - `aim/`, `active.json`, derived PNGs, and `.source_hashes.json` are all gitignored (see `.gitignore`)
+- Do not add a code-level global confidence value; maintain all template thresholds in `resource/template_confidence.txt`
 
 > This page is an AI translation and may contain ambiguities or inaccuracies. For authoritative content, refer to the [简体中文 Wiki](./模板包与分辨率).

@@ -35,7 +35,7 @@ _LOG_FILE_PATTERN = re.compile(r'^magia_\d{8}_\d{6}\.log(?:\.\d+)?$')
 def _base_dir():
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _log_dir():
@@ -142,8 +142,8 @@ def configure_logging(console_level=logging.WARNING, file_level=None,
     #返回根 logger。控制台实际级别会被 MAGIA_LOG_LEVEL 环境变量覆盖。
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
-    #Pillow 解码 PNG 时会为每个数据块输出 DEBUG，容易淹没实际识图流程。
-    logging.getLogger('PIL').setLevel(logging.WARNING)
+    #Pillow 跟随用户选择的根日志等级，DEBUG 模式保留 PNG chunk 诊断信息。
+    logging.getLogger('PIL').setLevel(logging.NOTSET)
     if file_level is None:
         file_level = _saved_file_level()
     for h in list(root.handlers):

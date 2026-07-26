@@ -14,7 +14,7 @@ DEFAULT_LOG_RETENTION_DAYS = 7
 def _base_dir():
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 SETTINGS_PATH = os.path.join(_base_dir(), 'settings.json')

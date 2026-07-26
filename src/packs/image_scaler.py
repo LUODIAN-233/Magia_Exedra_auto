@@ -92,22 +92,34 @@ def _run_magick(src, dst, factor, is_cancelled=None):
     os.remove(temp_dst)
     cmd = prefix + [src, "-filter", "Triangle", "-resize", f"{factor * 100:g}%", temp_dst]
     try:
-        process = subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        deadline = time.monotonic() + 120
-        while process.poll() is None:
-            if (is_cancelled and is_cancelled()) or time.monotonic() >= deadline:
-                process.kill()
-                process.wait()
-                if is_cancelled and is_cancelled():
-                    raise TemplateOperationCancelled("素材缩放已取消")
-                raise RuntimeError("ImageMagick 运行超时")
-            time.sleep(0.1)
-        if process.returncode:
-            raise subprocess.CalledProcessError(process.returncode, cmd)
-        os.replace(temp_dst, dst)
+        #Windows 上 coder 模块可能偶发加载失败；仅对非零退出重试一次。
+        for attempt in range(2):
+            if os.path.exists(temp_dst):
+                os.remove(temp_dst)
+            with tempfile.TemporaryFile() as stderr_file:
+                process = subprocess.Popen(
+                    cmd, stdout=subprocess.DEVNULL, stderr=stderr_file, env=env,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                deadline = time.monotonic() + 120
+                while process.poll() is None:
+                    if (is_cancelled and is_cancelled()) or time.monotonic() >= deadline:
+                        process.kill()
+                        process.wait()
+                        if is_cancelled and is_cancelled():
+                            raise TemplateOperationCancelled("素材缩放已取消")
+                        raise RuntimeError("ImageMagick 运行超时")
+                    time.sleep(0.1)
+                stderr_file.seek(0)
+                stderr = stderr_file.read()
+            if process.returncode == 0:
+                os.replace(temp_dst, dst)
+                return
+            error = subprocess.CalledProcessError(process.returncode, cmd, stderr=stderr)
+            if attempt == 0:
+                time.sleep(0.2)
+                continue
+            raise error
     finally:
         if os.path.exists(temp_dst):
             os.remove(temp_dst)

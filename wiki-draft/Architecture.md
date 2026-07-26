@@ -10,6 +10,7 @@ src/
   click/                     Click layer
     click_action.py          Same-frame template-group matching, coordinate actions, resolution detection
     click_behavior.py        Window recognition, client motion sampling, OpenCV matching, mouse action
+    template_confidence.py   Per-PNG thresholds, hot reload, and completeness validation
   workers/                   Automation worker threads
     base.py                  BaseWorker base class, retry_until, timeout constants
     registry.py              ParamSpec / WorkerMeta / @register registry
@@ -19,10 +20,13 @@ src/
     language_switcher.py     aim junction, pack scanning/selection/validation
     image_scaler.py          Derive other-resolution templates from 2K source
     file_lock.py             Cross-process template mutex
-  update_check.py            Version checking and safe update installation
-  log_setup.py               Windowed-safe console and rotating-file logging configuration
-  input_activity.py          User keyboard/mouse monitoring and automation-input isolation
-resource/                    Icons and other resources
+  core/                      Application infrastructure
+    app_settings.py          GUI settings persistence
+    log_setup.py             Windowed-safe console and rotating-file logging configuration
+    input_activity.py        User keyboard/mouse monitoring and automation-input isolation
+  update/
+    update_check.py          Version checking and safe update installation
+resource/                    Icons and per-PNG confidence configuration
 language/                    Template pack source directories
 tools/ImageMagick/           Asset scaling tool
 ```
@@ -31,9 +35,9 @@ tools/ImageMagick/           Asset scaling tool
 
 ```text
 main.py -> src/workers -> src/click/click_action -> src/click/click_behavior -> game
-src/workers/base.py -> src/input_activity.py -> Win32 user32
+src/workers/base.py -> src/core/input_activity.py -> Win32 user32
 main.py -> src/packs/image_scaler
-main.py -> src/update_check
+main.py -> src/update/update_check
 ```
 
 ## main.py
@@ -87,7 +91,11 @@ Collects contiguous numbered template variants, compares the entire group agains
 
 ### click_behavior.py
 
-Window lookup/focus, visible game-window capture, OpenCV matching, client-only motion sampling, and mouse action. Before matching, the same 3x3 Gaussian blur is applied to both screenshot and templates, followed by `TM_SQDIFF_NORMED`; a match requires a score strictly `> 0.8`. Template recognition captures the visible game window, while recovery-motion detection samples only the game client. The game must remain visible and unobstructed.
+Window lookup/focus, visible game-window capture, OpenCV matching, client-only motion sampling, and mouse action. Before matching, the same 3x3 Gaussian blur is applied to both screenshot and templates, followed by `TM_SQDIFF_NORMED`. Template recognition and recovery-motion detection sample only the game client. The game must remain visible and unobstructed.
+
+### template_confidence.py
+
+Parses and hot-reloads `resource/template_confidence.txt`. The highest-scoring candidate uses its own PNG threshold; Link Raid's full-image and level-number winners resolve thresholds independently. Missing, duplicate, malformed, or out-of-range entries reject recognition instead of falling back to a global value. Task startup verifies that every PNG in the active pack resolves to a threshold.
 
 ## src/packs
 
@@ -103,15 +111,21 @@ Uses ImageMagick Triangle filtering to derive 720p/1080p/4K packs from each 2560
 
 Repository-specific `Global\\` Windows mutex shared by switching, scaling, worker runtime leases, update-lock recovery, and the installer.
 
-## src/update_check.py
+## src/update/update_check.py
 
 Prerelease-aware update checking and frozen-app updating. Reading remains compatible with one unique `MagiaExedra_auto_<tag>.zip` or `MagiaExedra_auto_<tag>_win64.zip`; new releases must use `_win64`. Automatic install requires GitHub SHA-256, cancellable size/hash-checked download, safe bounded extraction, AMD64 PE validation, backups, hash verification, rollback/recovery markers, and startup-health handshake.
 
-## src/log_setup.py
+## src/core
 
-Stdlib-only logging configuration called once at `main.py` import, before `QApplication`. When stderr exists, the console defaults to WARNING and `MAGIA_LOG_LEVEL` can override it; `--windowed` builds safely skip a missing console. Before business imports, the file handler reads `settings.json`, defaults to INFO for new installations, and follows the GUI selector. Worker `signal.emit` messages still display directly in the GUI and are mirrored as `magia.runtime` INFO records with a deduplication marker. Pillow's per-PNG-block DEBUG output is suppressed. Retention defaults to seven days, supports 1-365 days, and startup removes only strictly named expired Magia logs while retaining the active log family.
+### log_setup.py
 
-## src/input_activity.py
+Stdlib-only logging configuration called once at `main.py` import, before `QApplication`. When stderr exists, the console defaults to WARNING and `MAGIA_LOG_LEVEL` can override it; `--windowed` builds safely skip a missing console. Before business imports, the file handler reads `settings.json`, defaults to INFO for new installations, and follows the GUI selector. Worker `signal.emit` messages still display directly in the GUI and are mirrored as `magia.runtime` INFO records with a deduplication marker. Pillow inherits the selected log level, so per-PNG-block diagnostics remain available at DEBUG. Retention defaults to seven days, supports 1-365 days, and startup removes only strictly named expired Magia logs while retaining the active log family.
+
+### app_settings.py
+
+Atomically persists automation mode, log level, and log retention to root `settings.json`.
+
+### input_activity.py
 
 Uses Windows `ctypes` to monitor keyboard and mouse activity. Keyboard input or cumulative large mouse movement pauses automation until the user has been idle for 5 seconds. PyAutoGUI operations use a guard context, so the bot's own movements and clicks do not trigger the pause.
 

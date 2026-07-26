@@ -81,11 +81,11 @@ class LinkRaidWorker(BaseWorker):
 
     def _run(self):
         if isinstance(self.level_choice, bool) or self.level_choice not in (4, 6, 7, 8, 9, 10, 11, 12):
-            self.signal.emit('Link Raid 等级参数无效，本次挂机已停止。')
+            self._emit_log('Link Raid 等级参数无效，本次挂机已停止。', 'ERROR')
             return
         if isinstance(self.lp_recover_times, bool) or not isinstance(self.lp_recover_times, int) \
                 or not 1 <= self.lp_recover_times <= 11:
-            self.signal.emit('喝体力药次数参数无效，本次挂机已停止。')
+            self._emit_log('喝体力药次数参数无效，本次挂机已停止。', 'ERROR')
             return
         logger.info('执行LinkRaidWorker,两秒钟后启动！')
         self.signal.emit(str('启动link raid挂机'))
@@ -137,14 +137,14 @@ class LinkRaidWorker(BaseWorker):
         if not self._running():
             return
         if click_action.click_position_scaled(2000, 1000, self._running) != 2:
-            self.signal.emit('无法安全执行初始坐标点击，本次挂机已停止。')
+            self._emit_log('无法安全执行初始坐标点击，本次挂机已停止。', 'ERROR')
             self._finish()
             return
         self.signal.emit(str('把游戏弄到前台，然后随便碰一下中间'))
         if self._wait(0.2):
             return
         if click_action.click_position_scaled(2400, 1200, self._running) != 2:
-            self.signal.emit('无法安全执行 quests 坐标点击，本次挂机已停止。')
+            self._emit_log('无法安全执行 quests 坐标点击，本次挂机已停止。', 'ERROR')
             self._finish()
             return
         self.signal.emit(str('quests点击完成，这一下使用的是位置点击，不是识图，如果没有点到说明其他问题发生了'))
@@ -230,7 +230,7 @@ class LinkRaidWorker(BaseWorker):
                     self.signal.emit(str('refresh点击完成'))
 
         if self._running() and self.win_exist == 1:
-            self.signal.emit('等待已结束战斗超时，已安全停止。')
+            self._emit_log('等待已结束战斗超时，已安全停止。', 'ERROR')
             self._finish()
             return
 
@@ -361,7 +361,7 @@ class LinkRaidWorker(BaseWorker):
             if result == 2:
                 self.signal.emit(str(f'lv{self.level_choice}点击完成'))
                 return 2
-            self.signal.emit(str(f'lv{self.level_choice}点击失败，将刷新列表'))
+            self._emit_log(f'lv{self.level_choice}点击失败，将刷新列表', 'WARNING')
             return 1
         no_lv = click_action.find_item_with_result(
             self, './aim/quests/link_raid/backup_requests/lv/no_lv', 'no_lv'
@@ -523,7 +523,7 @@ class LinkRaidWorker(BaseWorker):
         if wait_back == 2:
             self.signal.emit(str('back已经可以看到，可以开始点赞'))
         elif self._running():
-            self.signal.emit('等待back超时，已安全停止。')
+            self._emit_log('等待back超时，已安全停止。', 'ERROR')
             self._finish()
 
         # 点赞系统。最多点 9 下，点到不能点为止

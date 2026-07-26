@@ -18,7 +18,7 @@ from src.click import click_action
 from src.packs import language_switcher
 from src.packs.file_lock import template_write_lock
 from src.packs.file_lock import TemplateOperationCancelled
-from src.input_activity import UserActivityGuard
+from src.core.input_activity import UserActivityGuard
 
 
 #普通界面等待超时（秒），超时后安全停止
@@ -46,6 +46,7 @@ def retry_until(action, is_running, timeout=RETRY_TIMEOUT, wait=None):
 class BaseWorker(QThread):
     #所有挂机工作线程的基类。子类只需实现 run()，流程中用 self._running() / self._wait() / self._click_until()。
     signal = Signal(str)
+    logSignal = Signal(str, str)
 
     def __init__(self):
         super().__init__()
@@ -54,6 +55,9 @@ class BaseWorker(QThread):
         self.expected_pack = None
         self._last_automation_position = None
         self._activity_guard = UserActivityGuard(state_callback=self._activity_changed)
+
+    def _emit_log(self, message, level='INFO'):
+        self.logSignal.emit(str(message), str(level).upper())
 
     def _activity_changed(self, paused):
         if paused:
@@ -85,7 +89,7 @@ class BaseWorker(QThread):
         #每次启动前重置状态，保证同一个线程对象可反复启动
         #（对应原来 GUI 启动前 guaji=1、clear 事件 的两步操作）。
         if self.isRunning():
-            self.signal.emit('挂机线程尚未结束，不能重新启动。')
+            self._emit_log('挂机线程尚未结束，不能重新启动。', 'WARNING')
             return False
         self._stop_event.clear()
         self._active = True
@@ -105,15 +109,15 @@ class BaseWorker(QThread):
             with template_write_lock(
                     language_switcher.BASE_DIR, timeout=2, is_cancelled=self._stop_event.is_set):
                 if self.expected_pack and language_switcher.current_selection() != self.expected_pack:
-                    self.signal.emit('激活模板已被其它程序改变，本次挂机已停止。')
+                    self._emit_log('激活模板已被其它程序改变，本次挂机已停止。', 'ERROR')
                     return
                 action()
         except TemplateOperationCancelled:
             pass
         except TimeoutError as e:
-            self.signal.emit(f'{e}，本次挂机未启动。')
+            self._emit_log(f'{e}，本次挂机未启动。', 'ERROR')
         except Exception:
-            self.signal.emit('挂机线程异常退出：\n' + traceback.format_exc())
+            self._emit_log('挂机线程异常退出：\n' + traceback.format_exc(), 'ERROR')
         finally:
             self._activity_guard.stop()
             self._finish()
@@ -169,6 +173,9 @@ class BaseWorker(QThread):
             if self._wait(min(0.5, max(0, deadline - time.monotonic()))):
                 break
         if result == 1 and self._running():
-            self.signal.emit(f'等待{name}超过{timeout}秒，已安全停止。请检查起始界面、模板语言和分辨率。')
+            self._emit_log(
+                f'等待{name}超过{timeout}秒，已安全停止。请检查起始界面、模板语言和分辨率。',
+                'ERROR',
+            )
             self._finish()
         return result

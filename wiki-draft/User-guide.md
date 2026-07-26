@@ -65,7 +65,7 @@ Select a stage and team, then remain on the screen where clicking `play` would s
 3. Click `retry` to begin the next run.
 4. Recover stamina according to the setting, or stop when recovery is unavailable.
 
-Crystalis `result` is searched only in the right 50% of the game client and requires a score strictly above 0.85, excluding title-bar and unrelated left-side matches.
+Crystalis `result` is searched only in the right 50% of the game client. Its per-image entries in `resource/template_confidence.txt` default to 0.85, excluding unrelated left-side matches.
 
 ## Templates and resolution
 
@@ -74,6 +74,7 @@ Crystalis `result` is searched only in the right 50% of the game client and requ
 - `（空）` means a pack is unavailable. Wait for startup refresh or click `刷新列表`.
 - 2K is the source pack; 720p, 1080p, and 4K packs are generated incrementally.
 - The JP server can switch to EN in-game and reuse English templates.
+- Every logical PNG has its own threshold in `resource/template_confidence.txt`. Saving takes effect on the next recognition attempt; missing or malformed entries block task startup.
 
 Template naming, the `aim` junction, scaling recipes, and integrity validation are documented in [Template packs and resolutions](./Template-packs-and-resolutions).
 

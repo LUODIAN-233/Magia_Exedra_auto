@@ -32,7 +32,7 @@ if getattr(sys, "frozen", False):
 
 #日志要在业务模块导入前配置好，后续所有 logger 才能被统一 handler 接管。
 #MAGIA_LOG_LEVEL 环境变量可覆盖控制台级别（默认 WARNING，开发时设 DEBUG 看全部）。
-from src.log_setup import cleanup_old_logs, configure_logging, set_file_log_level
+from src.core.log_setup import cleanup_old_logs, configure_logging, set_file_log_level
 configure_logging()
 
 from datetime import datetime
@@ -47,12 +47,13 @@ from PySide6.QtGui import QIcon, QIntValidator
 
 #其他自己写的文件
 from src.packs import language_switcher, image_scaler
-from src.app_settings import (GUI_LOG_LEVELS, load_automation_mode, load_log_level,
-                              load_log_retention_days, save_automation_mode,
-                              save_log_level, save_log_retention_days)
+from src.core.app_settings import (GUI_LOG_LEVELS, load_automation_mode, load_log_level,
+                                   load_log_retention_days, save_automation_mode,
+                                   save_log_level, save_log_retention_days)
 
 logger = logging.getLogger(__name__)
 runtime_logger = logging.getLogger('magia.runtime')
+GUI_LOG_MAX_LINES = 500
 
 
 class GuiLogHandler(logging.Handler):
@@ -147,7 +148,7 @@ def get_worker_registry():
 
 class LanguageSwitcherWidget(QWidget):
     #语言由用户选择，分辨率按游戏客户区自动匹配；最终切换根目录 aim junction。
-    switched = Signal(str)  #切换完成或失败时发出，用于在日志框显示
+    switched = Signal(str, str)  #消息、日志等级
     scaleFinished = Signal()
     scalingChanged = Signal(bool)
     def __init__(self, busy_check=None):
@@ -212,7 +213,7 @@ class LanguageSwitcherWidget(QWidget):
     def refresh_packs(self):
         """重新扫描模板，并在后台增量生成派生分辨率。"""
         if self.busy_check():
-            self.switched.emit('挂机运行中，不能刷新或切换模板。')
+            self.switched.emit('挂机运行中，不能刷新或切换模板。', 'WARNING')
             return False
         #启动和手动刷新共用这条路径，确保全新安装也会生成空的派生模板目录。
         self._refresh()
@@ -230,18 +231,29 @@ class LanguageSwitcherWidget(QWidget):
         def _work():
             try:
                 summary = image_scaler.scale_all(
-                    progress_cb=lambda s: self.switched.emit(s),
+                    progress_cb=lambda s: self.switched.emit(s, 'INFO'),
                     is_cancelled=self._scale_cancel.is_set,
                 )
                 if summary:
-                    self.switched.emit(summary)
+                    self.switched.emit(summary, self._scale_summary_level(summary))
             except Exception as e:
-                self.switched.emit(f'素材缩放出错: {e}')
+                self.switched.emit(f'素材缩放出错: {e}', 'ERROR')
             finally:
                 self.scaleFinished.emit()
         self._scale_thread = threading.Thread(target=_work, daemon=True)
         self._scale_thread.start()
         return True
+
+    @staticmethod
+    def _scale_summary_level(summary):
+        text = str(summary)
+        if any(marker in text for marker in (
+                '失败 ', '缩放出错', '无法确认 ImageMagick',
+                '没找到 ImageMagick', 'language/ 不存在', '没有安全可用')):
+            return 'ERROR'
+        if any(marker in text for marker in ('损坏', '清理失败', '扫描不完整', '不安全', '已取消')):
+            return 'WARNING'
+        return 'INFO'
 
     def _scale_finished(self):
         self._scaling = False
@@ -274,7 +286,7 @@ class LanguageSwitcherWidget(QWidget):
         if not language_switcher.remember_language(lang):
             text = '保存游戏语言失败，请检查 language/active.json 是否可写。'
             self.statusLabel.setText(text)
-            self.switched.emit(text)
+            self.switched.emit(text, 'ERROR')
             return
         self.auto_select_resolution(allow_fallback=True)
 
@@ -283,14 +295,14 @@ class LanguageSwitcherWidget(QWidget):
             text = '挂机运行中，不能切换模板。'
             self._refresh()
             if announce:
-                self.switched.emit(text)
+                self.switched.emit(text, 'WARNING')
             return False, text
         lang = self.langCombo.currentData()
         if not lang:
             text = '没有可用的语言模板。'
             self.statusLabel.setText(text)
             if announce:
-                self.switched.emit(text)
+                self.switched.emit(text, 'ERROR')
             return False, text
 
         if detected is None:
@@ -320,7 +332,7 @@ class LanguageSwitcherWidget(QWidget):
                 text = '未检测到游戏窗口；启动游戏后会自动选择模板分辨率。'
             self.statusLabel.setText(text)
             if announce:
-                self.switched.emit(text)
+                self.switched.emit(text, 'WARNING')
             return False, text
 
         ok, msg = language_switcher.switch(lang, res)
@@ -337,7 +349,7 @@ class LanguageSwitcherWidget(QWidget):
         else:
             self._update_status(lang, res, out)
         if announce:
-            self.switched.emit(out)
+            self.switched.emit(out, 'INFO' if ok else 'ERROR')
         return ok, out
 
 
@@ -364,6 +376,7 @@ class mywindow(QWidget):
         self._update_manual = False
         self._initial_layout_sized = False
         self._startup_template_refresh_pending = False
+        self._log_scroll_pending = False
 
         #启动时确保 aim 联接可用（aim 被移走时按 config 或第一个可用 pack 自动恢复）
         language_switcher.ensure_active()
@@ -379,7 +392,8 @@ class mywindow(QWidget):
         self.textedit_1.setReadOnly(True)
         self.textedit_1.setMinimumHeight(150)
         self.textedit_1.setPlaceholderText('运行消息会显示在这里')
-        self.textedit_1.document().setMaximumBlockCount(2000)
+        #GUI 只保留最近日志；完整历史仍由 logs/ 下的滚动文件负责。
+        self.textedit_1.document().setMaximumBlockCount(GUI_LOG_MAX_LINES)
         self.debugLog.connect(self._append_logging_record)
         initial_log_level = load_log_level()
         self._gui_log_handler = GuiLogHandler(self.debugLog.emit)
@@ -417,7 +431,7 @@ class mywindow(QWidget):
         self.startButton.setObjectName('startButton')
 
         #应用级选项集中放进设置对话框，主界面只保留一个入口。
-        from src.update_check import VERSION, is_prerelease_version
+        from src.update.update_check import VERSION, is_prerelease_version
         self.settingsDialog = SettingsDialog(
             initial_log_level, load_log_retention_days(),
             is_prerelease_version(VERSION), self,
@@ -441,8 +455,12 @@ class mywindow(QWidget):
 
         #语言由用户选择，分辨率按游戏客户区自动选择。
         self.lang_switcher = LanguageSwitcherWidget(self._automation_running)
-        self.lang_switcher.switched.connect(self._append_log)
-        self.lang_switcher.switched.connect(lambda: self.setWindowIcon(QIcon('./resource/main.ico')))
+        self.lang_switcher.switched.connect(
+            lambda text, level: self._append_log(text, level=level, source='模板')
+        )
+        self.lang_switcher.switched.connect(
+            lambda _text, _level: self.setWindowIcon(QIcon('./resource/main.ico'))
+        )
         self.lang_switcher.scalingChanged.connect(self._scaling_changed)
         self.lang_switcher.actionRow.addWidget(self.settingsButton)
 
@@ -553,6 +571,7 @@ class mywindow(QWidget):
         #为一个挂机模式创建 worker 和独立参数页，返回 entry 字典
         worker = meta.worker_class()
         worker.signal.connect(self._append_log)
+        worker.logSignal.connect(self._append_log)
         display_name = meta.name.replace('_', ' ')
         worker.finished.connect(lambda n=display_name: logger.info('%s挂机结束', n))
         worker.finished.connect(lambda n=display_name: self._append_log(f'{n}挂机结束或被主动停止\n'))
@@ -623,10 +642,13 @@ class mywindow(QWidget):
         self._update_manual = manual
         self._refresh_control_state()
         channel = 'beta' if self.betaCheckBox.isChecked() else 'stable'
-        self._append_log('正在检查更新...' + ('（含 beta）' if channel == 'beta' else ''))
+        self._append_log(
+            '正在检查更新...' + ('（含 beta）' if channel == 'beta' else ''),
+            source='更新',
+        )
         def _work():
             try:
-                from src.update_check import check_for_update
+                from src.update.update_check import check_for_update
                 r = check_for_update(channel=channel, is_cancelled=self._update_cancel.is_set)
             except Exception as e:
                 r = {'has_update': False, 'message': f'检查更新出错：{e}'}
@@ -645,36 +667,51 @@ class mywindow(QWidget):
         self._update_cancel.clear()
         self._refresh_control_state()
         if not isinstance(r, dict):
-            self._append_log(str(r))
+            self._append_log(str(r), level='ERROR', source='更新')
             return
-        self._append_log(r.get('message', ''))
+        message = r.get('message', '')
+        error_prefixes = ('查询更新失败：', '检查更新出错：', '本地版本号无法解析：')
+        level = 'ERROR' if message.startswith(error_prefixes) else 'INFO'
+        self._append_log(message, level=level, source='更新')
         if r.get('has_update'):
             self._offer_update(r)
 
     def _local_version_disp(self):
-        from src.update_check import VERSION
+        from src.update.update_check import VERSION
         return VERSION if VERSION[:1] in ('v', 'V') else f'v{VERSION}'
 
     def _offer_update(self, r):
         #有新版本时：打包版弹对话框询问是否更新；源码模式回退为打开 Release 页
-        from src.update_check import is_frozen
+        from src.update.update_check import is_frozen
         tag = r.get('latest_tag', '')
         url = r.get('url') or r.get('asset_url') or 'https://github.com/LUODIAN-233/Magia_Exedra_auto/releases'
         if not is_frozen():
             if self._update_manual:
-                self._append_log('当前为源码运行模式，已打开 Release 页面，请手动更新或 git pull。')
+                self._append_log(
+                    '当前为源码运行模式，已打开 Release 页面，请手动更新或 git pull。',
+                    source='更新',
+                )
                 webbrowser.open(url)
             else:
-                self._append_log(f'当前为源码运行模式，请前往 {url} 手动更新或 git pull。')
+                self._append_log(
+                    f'当前为源码运行模式，请前往 {url} 手动更新或 git pull。',
+                    source='更新',
+                )
             return
         asset_url = r.get('asset_url')
         if not asset_url or not r.get('asset_sha256'):
-            self._append_log('Release 未提供唯一且带 SHA-256 的更新 ZIP，已禁用自动安装。')
+            self._append_log(
+                'Release 未提供唯一且带 SHA-256 的更新 ZIP，已禁用自动安装。',
+                level='ERROR', source='更新',
+            )
             if self._update_manual:
                 webbrowser.open(url)
             return
         if self._automation_running():
-            self._append_log('挂机或素材缩放正在运行，请停止后再开始更新。')
+            self._append_log(
+                '挂机或素材缩放正在运行，请停止后再开始更新。',
+                level='WARNING', source='更新',
+            )
             return
         size_mb = (r.get('asset_size') or 0) // 1024 // 1024
         reply = QMessageBox.question(
@@ -687,14 +724,14 @@ class mywindow(QWidget):
             try:
                 self._start_download(r)
             except Exception as e:
-                self._append_log(f'无法开始更新：{e}')
+                self._append_log(f'无法开始更新：{e}', level='ERROR', source='更新')
                 self._reset_update_state(cleanup=True)
 
     def _start_download(self, r):
-        from src.update_check import (download_asset, extract_update, UpdateCancelled,
-                                      acquire_update_lock)
+        from src.update.update_check import (download_asset, extract_update, UpdateCancelled,
+                                             acquire_update_lock)
         if self._update_state != 'idle' or self._automation_running() or self._closing:
-            self._append_log('当前有其它任务运行，不能开始更新。')
+            self._append_log('当前有其它任务运行，不能开始更新。', level='WARNING', source='更新')
             return
         job_id = uuid.uuid4().hex
         asset_url = r['asset_url']
@@ -773,7 +810,7 @@ class mywindow(QWidget):
         if hasattr(self, '_progress'):
             self._progress.close()
         self._pending_update = payload
-        self._append_log('更新包已通过校验，正在安全停止后台任务并准备安装...')
+        self._append_log('更新包已通过校验，正在安全停止后台任务并准备安装...', source='更新')
         self.close()
 
     def _on_update_failed(self, job_id, msg):
@@ -782,7 +819,11 @@ class mywindow(QWidget):
         self._update_prepare_thread = None
         if hasattr(self, '_progress'):
             self._progress.close()
-        self._append_log(msg if '取消' in msg else f'更新失败：{msg}')
+        cancelled = '取消' in msg
+        self._append_log(
+            msg if cancelled else f'更新失败：{msg}',
+            level='WARNING' if cancelled else 'ERROR', source='更新',
+        )
         self._reset_update_state(cleanup=False)
 
     def _on_update_cancel(self):
@@ -794,19 +835,19 @@ class mywindow(QWidget):
 
     def _apply_update(self, payload):
         #写批处理：等本进程退出后 robocopy 覆盖安装目录并重启；然后退出
-        from src.update_check import write_update_bat
+        from src.update.update_check import write_update_bat
         exe_path = sys.executable
         bat_path = write_update_bat(
             exe_path, payload['src_dir'], os.getpid(), payload['job_dir'], self._update_lock_path,
             self._update_job_id,
         )
-        self._append_log('更新已准备就绪，程序即将退出完成安装。')
+        self._append_log('更新已准备就绪，程序即将退出完成安装。', source='更新')
         subprocess.Popen(['cmd', '/c', bat_path],
                          creationflags=subprocess.CREATE_NO_WINDOW,
                          close_fds=True)
 
     def _reset_update_state(self, cleanup=True):
-        from src.update_check import release_update_lock
+        from src.update.update_check import release_update_lock
         release_update_lock(self._update_lock_path, self._update_job_id)
         if cleanup and self._update_job_dir:
             shutil.rmtree(self._update_job_dir, ignore_errors=True)
@@ -825,6 +866,19 @@ class mywindow(QWidget):
             self.textedit_1.appendPlainText(
                 f'[{timestamp}] [{level}] [{source}] {line}'
             )
+        scrollbar = self.textedit_1.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+        if not self._log_scroll_pending:
+            self._log_scroll_pending = True
+            QTimer.singleShot(0, self._scroll_log_to_bottom)
+
+    def _scroll_log_to_bottom(self):
+        self._log_scroll_pending = False
+        try:
+            scrollbar = self.textedit_1.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+        except RuntimeError:
+            pass  #窗口已经销毁
 
     def _append_log(self, text, level='INFO', source='运行'):
         level_name = str(level).strip().upper()
@@ -850,7 +904,10 @@ class mywindow(QWidget):
             target = 'GUI 调试记录和日志文件' if file_enabled else 'GUI 调试记录'
             self._append_log(f'日志等级已切换并记忆为 {level}，已应用到{target}；挂机运行消息始终显示。')
         else:
-            self._append_log(f'日志等级已切换为 {level}，但保存失败；下次启动将使用原设置。')
+            self._append_log(
+                f'日志等级已切换为 {level}，但保存失败；下次启动将使用原设置。',
+                level='WARNING', source='日志',
+            )
 
     def _cleanup_old_logs(self):
         retention_days = self.retentionSpin.value()
@@ -1028,14 +1085,17 @@ class mywindow(QWidget):
             label = self.lang_switcher._lang_label(lang) if lang else '未选择'
             text = f'未检测到游戏运行。已记忆游戏语言：{label}。'
             self.lang_switcher.statusLabel.setText(text)
-            self._append_log(text)
+            self._append_log(text, level='WARNING')
             return
         ok, text = self.lang_switcher.auto_select_resolution(
             detected=detected, announce=False,
         )
-        self._append_log(text)
+        self._append_log(text, level='INFO' if ok else 'ERROR')
         if not ok:
-            self._append_log('已检测到游戏，但无法自动选择匹配的模板分辨率。')
+            self._append_log(
+                '已检测到游戏，但无法自动选择匹配的模板分辨率。',
+                level='ERROR',
+            )
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -1092,7 +1152,7 @@ class mywindow(QWidget):
 
         update_alive = any(t and t.is_alive() for t in (self._update_check_thread, self._update_prepare_thread))
         if not workers_stopped or (scale_thread and scale_thread.is_alive()) or update_alive:
-            self._append_log('后台任务尚未安全停止，请稍后再关闭窗口。')
+            self._append_log('后台任务尚未安全停止，请稍后再关闭窗口。', level='WARNING')
             self._closing = False
             self._refresh_control_state()
             event.ignore()
@@ -1102,7 +1162,7 @@ class mywindow(QWidget):
                 self._update_state = 'closing'
                 self._apply_update(self._pending_update)
             except Exception as e:
-                self._append_log(f'启动更新安装器失败：{e}')
+                self._append_log(f'启动更新安装器失败：{e}', level='ERROR', source='更新')
                 self._closing = False
                 self._reset_update_state(cleanup=True)
                 event.ignore()
@@ -1129,37 +1189,49 @@ class mywindow(QWidget):
 
     def _start_worker(self, entry):
         if self._automation_running() or self._update_busy() or self._closing:
-            self.textedit_1.appendPlainText('已有挂机任务运行中，请先停止。')
+            self._append_log('已有挂机任务运行中，请先停止。', level='WARNING')
             return
-        from src.update_check import update_recovery_issue
+        from src.update.update_check import update_recovery_issue
         recovery = update_recovery_issue(os.path.dirname(sys.executable))
         if recovery:
-            self._append_log(f'检测到上次更新回滚不完整，已禁止挂机。请按文件提示恢复：{recovery}')
+            self._append_log(
+                f'检测到上次更新回滚不完整，已禁止挂机。请按文件提示恢复：{recovery}',
+                level='CRITICAL', source='更新',
+            )
             return
-        from src.click import click_behavior, click_action
+        from src.click import click_behavior, click_action, template_confidence
         if click_behavior.find_win('MadokaExedra') is None:
-            self._append_log('未找到游戏窗口 MadokaExedra，本次挂机已停止。请先启动游戏。')
+            self._append_log(
+                '未找到游戏窗口 MadokaExedra，本次挂机已停止。请先启动游戏。',
+                level='WARNING',
+            )
             return
         detected = click_behavior.get_client_size('MadokaExedra')
         if detected is None:
-            self._append_log('未能读取游戏客户区尺寸，本次挂机已停止。')
+            self._append_log('未能读取游戏客户区尺寸，本次挂机已停止。', level='ERROR')
             return
         switched, switch_message = self.lang_switcher.auto_select_resolution(
             detected=detected, announce=False,
         )
-        self._append_log(switch_message)
+        self._append_log(switch_message, level='INFO' if switched else 'ERROR')
         if not switched:
-            self._append_log('无法为当前游戏窗口选择安全的模板分辨率，本次挂机未启动。')
+            self._append_log(
+                '无法为当前游戏窗口选择安全的模板分辨率，本次挂机未启动。',
+                level='ERROR',
+            )
             return
         #自动切换后仍复核窗口与模板，避免外部进程同时改变 aim。
         res_info = click_action.detect_window_resolution()
-        self._append_log(res_info['message'])
+        self._append_log(res_info['message'], level='INFO' if res_info['matched'] else 'ERROR')
         if not res_info['matched']:
-            self._append_log('无法确认窗口与模板分辨率一致，为防止坐标误点，本次挂机未启动。')
+            self._append_log(
+                '无法确认窗口与模板分辨率一致，为防止坐标误点，本次挂机未启动。',
+                level='ERROR',
+            )
             return
         selection = language_switcher.current_selection()
         if selection is None:
-            self._append_log('当前没有有效的模板 pack，本次挂机未启动。')
+            self._append_log('当前没有有效的模板 pack，本次挂机未启动。', level='ERROR')
             return
         #先读取参数，动态模板路径（如 lv{level_choice}）才能只校验当前选择。
         worker = entry['worker']
@@ -1169,20 +1241,33 @@ class mywindow(QWidget):
                 path.format(**params) for path in entry['meta'].required_templates
             ]
         except (KeyError, TypeError, ValueError) as e:
-            self._append_log(str(e))
+            self._append_log(str(e), level='ERROR')
             return
         valid, errors = language_switcher.validate_template_groups(
             selection[0], selection[1], required_templates,
         )
         if not valid:
-            self._append_log('当前模板 pack 不完整，本次挂机未启动：\n' + '\n'.join(errors[:20]))
+            self._append_log(
+                '当前模板 pack 不完整，本次挂机未启动：\n' + '\n'.join(errors[:20]),
+                level='ERROR',
+            )
+            return
+        confidence_valid, confidence_errors = template_confidence.validate_pack(
+            selection[0], selection[1],
+        )
+        if not confidence_valid:
+            self._append_log(
+                '模板置信度配置不完整，本次挂机未启动：\n'
+                + '\n'.join(confidence_errors[:20]),
+                level='ERROR',
+            )
             return
         #注入已校验参数（lp_recover 已在 getter 里 +1 为存储值）
         for key, value in params.items():
             setattr(worker, key, value)
         worker.expected_pack = selection
         if entry['meta'].start_hint:
-            self.textedit_1.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}]: {entry['meta'].start_hint}")
+            self._append_log(entry['meta'].start_hint)
         self._set_automation_controls(False)
         if not worker.start():
             self._set_automation_controls(True)

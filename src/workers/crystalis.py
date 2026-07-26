@@ -18,7 +18,6 @@ from .registry import register, ParamSpec
 logger = logging.getLogger(__name__)
 
 RESULT_SEARCH_REGION = (0.5, 0.0, 1.0, 1.0)
-RESULT_MATCH_THRESHOLD = 0.85
 
 
 @register(
@@ -50,7 +49,7 @@ class CrystalisWorker(BaseWorker):
     def _run(self):
         if isinstance(self.lp_recover_times, bool) or not isinstance(self.lp_recover_times, int) \
                 or not 1 <= self.lp_recover_times <= 9:
-            self.signal.emit('喝体力药次数参数无效，本次挂机已停止。')
+            self._emit_log('喝体力药次数参数无效，本次挂机已停止。', 'ERROR')
             return
         logger.info('执行CrystalisWorker,两秒钟后启动！')
         self.signal.emit(str('启动刷晶花挂机'))
@@ -67,7 +66,7 @@ class CrystalisWorker(BaseWorker):
         if self._wait(2):
             return
         if click_action.click_position_scaled(2000, 1000, self._running) != 2:
-            self.signal.emit('无法安全执行初始坐标点击，本次挂机已停止。')
+            self._emit_log('无法安全执行初始坐标点击，本次挂机已停止。', 'ERROR')
             return
         self.signal.emit(str('把游戏弄到前台，然后随便碰一下中间'))
         if self._wait(1):
@@ -102,7 +101,6 @@ class CrystalisWorker(BaseWorker):
                 './aim/crystalis/result',
                 'result',
                 search_region=RESULT_SEARCH_REGION,
-                match_threshold=RESULT_MATCH_THRESHOLD,
             )
             if result == 2:
                 self.signal.emit(str('result点击完成，点了之后会出现retry'))
@@ -115,7 +113,7 @@ class CrystalisWorker(BaseWorker):
             if check_win == 1 and self._wait(0.5):
                 return
         if check_win == 1 and self._running():
-            self.signal.emit('等待晶花战斗结束超时，已安全停止。')
+            self._emit_log('等待晶花战斗结束超时，已安全停止。', 'ERROR')
             self._finish()
 
     def click_retry_or_recover_lp(self):

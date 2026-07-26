@@ -1,0 +1,59 @@
+# 模板独立置信度配置。保存后无需重启，下一次识图会自动重载。
+# 格式：相对于当前模板 pack 的 PNG 路径 = 阈值
+# 匹配条件为严格大于阈值；配置缺失、重复或格式错误时拒绝识别，不使用全局默认值。
+# 可选精确覆盖：EN/路径、JP/路径，或 EN/1920x1080/路径。
+
+# Crystalis
+crystalis/ok_1.png = 0.80
+crystalis/ok_2.png = 0.80
+crystalis/play_1.png = 0.80
+crystalis/result_1.png = 0.85
+crystalis/result_2.png = 0.85
+crystalis/result_3.png = 0.85
+crystalis/result_4.png = 0.85
+crystalis/result_5.png = 0.85
+crystalis/result_6.png = 0.85
+crystalis/result_7.png = 0.85
+crystalis/result_8.png = 0.85
+crystalis/result_9.png = 0.85
+crystalis/result_10.png = 0.85
+crystalis/result_11.png = 0.85
+crystalis/result_12.png = 0.85
+crystalis/retry_1.png = 0.80
+crystalis/retry_2.png = 0.80
+
+# Link Raid
+quests/link_raid_1.png = 0.80
+quests/link_raid/backup_requests_1.png = 0.80
+quests/link_raid/backup_requests/backup_requests_1.png = 0.80
+quests/link_raid/backup_requests/backup_requests_2.png = 0.80
+quests/link_raid/backup_requests/refresh_1.png = 0.80
+quests/link_raid/backup_requests/refresh_2.png = 0.80
+quests/link_raid/backup_requests/refresh_3.png = 0.80
+quests/link_raid/backup_requests/no_join_1.png = 0.80
+quests/link_raid/backup_requests/joined_battles_1.png = 0.80
+quests/link_raid/backup_requests/joined_battles_2.png = 0.80
+quests/link_raid/joined_battles/win_1.png = 0.80
+quests/link_raid/joined_battles/win_2.png = 0.80
+quests/link_raid/joined_battles/ended_1.png = 0.80
+quests/link_raid/backup_requests/join_1.png = 0.80
+quests/link_raid/backup_requests/join/play_1.png = 0.80
+quests/link_raid/backup_requests/join/ok_1.png = 0.80
+quests/link_raid/backup_requests/join/full/already_end_1.png = 0.80
+quests/link_raid/backup_requests/join/full/battle_full_1.png = 0.80
+quests/link_raid/backup_requests/join/full/ok_1.png = 0.80
+quests/link_raid/backup_requests/no_lp/no_lp_1.png = 0.80
+quests/link_raid/backup_requests/no_lp/ok_1.png = 0.80
+quests/link_raid/backup_requests/battle/tap_to_countinue_1.png = 0.80
+quests/link_raid/backup_requests/battle/tap_to_countinue_2.png = 0.80
+quests/link_raid/backup_requests/battle/back_1.png = 0.80
+quests/link_raid/backup_requests/battle/love_1.png = 0.80
+quests/link_raid/backup_requests/lv/lv4/lv4_1.png = 0.80
+quests/link_raid/backup_requests/lv/lv6/lv6_1.png = 0.80
+quests/link_raid/backup_requests/lv/lv7/lv7_1.png = 0.80
+quests/link_raid/backup_requests/lv/lv8/lv8_1.png = 0.80
+quests/link_raid/backup_requests/lv/lv9/lv9_1.png = 0.80
+quests/link_raid/backup_requests/lv/lv10/lv10_1.png = 0.80
+quests/link_raid/backup_requests/lv/lv11/lv11_1.png = 0.80
+quests/link_raid/backup_requests/lv/lv12/lv12_1.png = 0.80
+quests/link_raid/backup_requests/lv/no_lv_1.png = 0.80
