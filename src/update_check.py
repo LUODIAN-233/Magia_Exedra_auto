@@ -27,7 +27,7 @@ except ModuleNotFoundError:
     template_write_lock = None
     template_mutex_name = None
 
-VERSION = "2.3.2-beta.2"                  #当前版本（语义化，无前缀 v）；发布新版本时务必同步更新
+VERSION = "2.4.0-beta.1"                  #当前版本（语义化，无前缀 v）；发布新版本时务必同步更新
 REPO = "LUODIAN-233/Magia_Exedra_auto"
 RELEASES_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES_LIST_API = f"https://api.github.com/repos/{REPO}/releases"  #所有 release（含预发布），beta 通道用
@@ -70,6 +70,11 @@ def parse_version(s):
                 pre_keys.append((1, 0, p))
         return (major, minor, patch, 0, tuple(pre_keys))
     return (major, minor, patch, 1, ())
+
+
+def is_prerelease_version(version=VERSION):
+    parsed = parse_version(version)
+    return parsed is not None and parsed[3] == 0
 
 
 def _fetch_json(url, timeout=TIMEOUT):

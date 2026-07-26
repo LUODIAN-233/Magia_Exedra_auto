@@ -1,5 +1,6 @@
 import time
 import logging
+import statistics
 from pathlib import Path
 from contextlib import nullcontext
 
@@ -9,6 +10,11 @@ from . import click_behavior
 from src.packs import language_switcher, image_scaler
 
 logger = logging.getLogger(__name__)
+
+CLICK_CONFIRM_SAMPLES = 3
+CLICK_CONFIRM_INTERVAL = 0.3
+CLICK_STABILITY_RATIO = 0.008
+CLICK_STABILITY_MIN_RADIUS = 6
 
 
 def _worker_from_callback(callback):
@@ -52,6 +58,50 @@ def _template_files(picture):
         index += 1
 
 
+def _click_stability_radius():
+    size = click_behavior.get_client_size('MadokaExedra')
+    if size is None:
+        return 12
+    return max(CLICK_STABILITY_MIN_RADIUS, round(min(size) * CLICK_STABILITY_RATIO))
+
+
+def _confirm_stable_detection(self, detect_once, accepted, position, name, confirm_once=None):
+    """要求目标在 0.6 秒内三次采样都命中同一区域，确认期间不移动鼠标。"""
+    can_continue = getattr(self, '_running', None)
+    radius = _click_stability_radius()
+    samples = []
+    reference = None
+    for index in range(CLICK_CONFIRM_SAMPLES):
+        if can_continue is not None and not can_continue():
+            return None
+        if not _wait_for_user(can_continue):
+            return None
+        detected = confirm_once(samples[0][0]) if samples and confirm_once else detect_once()
+        point = position(detected)
+        if not accepted(detected) or point is None:
+            logger.debug('%s稳定性确认失败：第%d/%d次采样未命中',
+                         name, index + 1, CLICK_CONFIRM_SAMPLES)
+            return None
+        if reference is None:
+            reference = point
+        elif max(abs(point[0] - reference[0]), abs(point[1] - reference[1])) > radius:
+            logger.debug('%s稳定性确认失败：第%d/%d次采样位置%s偏离首次%s超过%dpx',
+                         name, index + 1, CLICK_CONFIRM_SAMPLES, point, reference, radius)
+            return None
+        samples.append((detected, point))
+        if index + 1 < CLICK_CONFIRM_SAMPLES and _wait(self, CLICK_CONFIRM_INTERVAL):
+            return None
+
+    click_point = (
+        round(statistics.median(sample[1][0] for sample in samples)),
+        round(statistics.median(sample[1][1] for sample in samples)),
+    )
+    logger.debug('%s在%.1f秒内连续%d次采样稳定命中，位置半径%dpx，确认点击坐标%s',
+                 name, CLICK_CONFIRM_INTERVAL * (CLICK_CONFIRM_SAMPLES - 1),
+                 CLICK_CONFIRM_SAMPLES, radius, click_point)
+    return samples[-1][0], click_point
+
+
 #尝试点击一次，查询组内所有图片，返回点击结果return
 def click_item_with_result(self, picture, name):
     files = _template_files(picture)
@@ -60,14 +110,24 @@ def click_item_with_result(self, picture, name):
         return 1
     if not files or not _wait_for_user(can_click):
         return 1
-    avg, score, path = click_behavior.best_template_match(files)
-    if avg is None or score <= click_behavior.MATCH_THRESHOLD:
-        logger.debug('比较了%s个模板，没有找到%s；最高匹配率 %.4f', len(files), name, score)
+    confirmed = _confirm_stable_detection(
+        self,
+        lambda: click_behavior.best_template_match(files),
+        lambda detected: detected[0] is not None
+        and detected[1] > click_behavior.MATCH_THRESHOLD,
+        lambda detected: detected[0],
+        name,
+        lambda first: click_behavior.best_template_match([Path(first[2])]),
+    )
+    if confirmed is None:
+        logger.debug('比较了%s个模板，%s未通过0.6秒三次采样稳定性确认', len(files), name)
         if _wait(self, 0.4):
             return 1
         return 1
+    detected, click_point = confirmed
+    _avg, score, path = detected
     logger.debug('点击%s的最高匹配模板%s，匹配率 %.4f', name, path, score)
-    result = click_behavior.click_auto(avg, can_click)
+    result = click_behavior.click_auto(click_point, can_click)
     if result == 2 and _wait(self, 0.5):
         return 1
     return result
@@ -97,19 +157,25 @@ def click_competing_item_with_result(self, selected, pictures, name):
         return 1
     if any(not files for files in groups.values()) or not _wait_for_user(can_click):
         return 1
-    label, text_label, avg, score, text_score, path = \
-        click_behavior.best_competing_template_match(selected, groups)
-    if label != selected or text_label != selected \
-            or score <= click_behavior.MATCH_THRESHOLD \
-            or text_score <= click_behavior.MATCH_THRESHOLD:
-        logger.debug('竞争识别%s失败；整图=%s/%s %.4f，文字=%s %.4f',
-                     name, label, path, score, text_label, text_score)
+    confirmed = _confirm_stable_detection(
+        self,
+        lambda: click_behavior.best_competing_template_match(selected, groups),
+        lambda detected: detected[0] == selected and detected[1] == selected
+        and detected[3] > click_behavior.MATCH_THRESHOLD
+        and detected[4] > click_behavior.MATCH_THRESHOLD,
+        lambda detected: detected[2],
+        name,
+    )
+    if confirmed is None:
+        logger.debug('竞争识别%s未通过0.6秒三次采样稳定性确认', name)
         if _wait(self, 0.4):
             return 1
         return 1
+    detected, click_point = confirmed
+    label, text_label, _avg, score, text_score, path = detected
     logger.debug('竞争识别点击%s的模板%s，整图 %.4f，文字 %.4f',
                  name, path, score, text_score)
-    result = click_behavior.click_auto(avg, can_click)
+    result = click_behavior.click_auto(click_point, can_click)
     if result == 2 and _wait(self, 0.5):
         return 1
     return result

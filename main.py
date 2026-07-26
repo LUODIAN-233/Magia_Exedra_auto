@@ -40,12 +40,15 @@ from datetime import datetime
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QRadioButton,
                                QPlainTextEdit, QWidget, QPushButton, QLabel, QLineEdit,
                                QComboBox, QSizePolicy, QStackedWidget, QVBoxLayout,
-                               QMessageBox, QProgressDialog, QCheckBox)
-from PySide6.QtCore import Qt, Signal
+                               QMessageBox, QProgressDialog, QCheckBox, QGroupBox,
+                               QDialog, QDialogButtonBox, QFormLayout)
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QIcon, QIntValidator
 
 #其他自己写的文件
 from src.packs import language_switcher, image_scaler
+from src.app_settings import (GUI_LOG_LEVELS, load_gui_log_level,
+                              save_gui_log_level)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +65,55 @@ class GuiLogHandler(logging.Handler):
             pass
 
 
+class CurrentPageStack(QStackedWidget):
+    """只按当前参数页计算高度，避免首次显示时缓存未完成的布局尺寸。"""
+
+    def sizeHint(self):
+        current = self.currentWidget()
+        return current.sizeHint() if current is not None else super().sizeHint()
+
+    def minimumSizeHint(self):
+        current = self.currentWidget()
+        return current.minimumSizeHint() if current is not None else super().minimumSizeHint()
+
+
+class SettingsDialog(QDialog):
+    def __init__(self, initial_log_level, beta_checked, parent=None):
+        super().__init__(parent)
+        self.setObjectName('settingsDialog')
+        self.setWindowTitle('设置')
+        self.setModal(True)
+        self.setMinimumWidth(360)
+
+        self.logLevelCombo = QComboBox()
+        self.logLevelCombo.addItems(GUI_LOG_LEVELS)
+        self.logLevelCombo.setCurrentText(initial_log_level)
+        self.betaCheckBox = QCheckBox('更新至 beta 版')
+        self.betaCheckBox.setChecked(beta_checked)
+        self.betaCheckBox.setToolTip(
+            '勾选后检查更新会包含预发布（beta）版本；不勾选则只更新到正式版'
+        )
+        self.checkUpdateBtn = QPushButton('立即检查更新')
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(12)
+        form.addRow('GUI 日志等级', self.logLevelCombo)
+        form.addRow('', self.betaCheckBox)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.button(QDialogButtonBox.Close).setText('关闭')
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(18, 18, 18, 16)
+        layout.setSpacing(14)
+        layout.addLayout(form)
+        layout.addWidget(self.checkUpdateBtn)
+        layout.addWidget(buttons)
+        self.setLayout(layout)
+
+
 def get_worker_registry():
     #PyAutoGUI 导入时会设置进程 DPI 模式，因此必须等 QApplication 先完成 Qt 的 DPI 初始化。
     from src.workers import get_registry
@@ -73,33 +125,36 @@ def get_worker_registry():
 
 
 class LanguageSwitcherWidget(QWidget):
-    #语言/分辨率切换控件，切换的是根目录 aim 这个 junction 的指向
-    #选好语言和分辨率后会自动切换，不需要点按钮；只剩"刷新列表"用于重新扫描 pack
+    #语言由用户选择，分辨率按游戏客户区自动匹配；最终切换根目录 aim junction。
     switched = Signal(str)  #切换完成或失败时发出，用于在日志框显示
     scaleFinished = Signal()
     scalingChanged = Signal(bool)
     def __init__(self, busy_check=None):
         super().__init__()
         self.busy_check = busy_check or (lambda: False)
-        self.titleLabel = QLabel('语言 / 分辨率切换')
         self.langCombo = QComboBox()
-        self.resCombo = QComboBox()
+        self.langCombo.setMinimumWidth(150)
         self.statusLabel = QLabel('正在检测模板...')
+        self.statusLabel.setWordWrap(True)
+        self.statusLabel.setObjectName('secondaryText')
         self.refreshBtn = QPushButton('刷新列表')
         self.refreshBtn.clicked.connect(self._refresh_clicked)
-        #activated 只在用户从下拉里选定一项时触发，程序里 setCurrentIndex 不会触发，所以刷新/重填时不会误切换
+        #activated 只响应用户选择；程序刷新下拉框不会误切换语言。
         self.langCombo.activated.connect(self._on_lang_activated)
-        self.resCombo.activated.connect(self._on_res_activated)
         self.scaleFinished.connect(self._scale_finished)
 
         row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel('游戏语言'))
         row.addWidget(self.langCombo)
-        row.addWidget(self.resCombo)
+        row.addStretch(1)
+        row.addWidget(self.refreshBtn)
+        self.actionRow = row
         layout = QVBoxLayout()
-        layout.addWidget(self.titleLabel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
         layout.addLayout(row)
         layout.addWidget(self.statusLabel)
-        layout.addWidget(self.refreshBtn)
         self.setLayout(layout)
 
         self.packs = {}
@@ -116,37 +171,40 @@ class LanguageSwitcherWidget(QWidget):
         #启动时保证 aim 可用，再扫描 pack 填充下拉框
         lang, res, msg = language_switcher.ensure_active()
         self.packs = language_switcher.list_packs()
+        selected_lang = language_switcher.preferred_language() or lang
 
         self.langCombo.blockSignals(True)
         self.langCombo.clear()
         for lg in sorted(self.packs.keys()):
             self.langCombo.addItem(self._lang_label(lg), lg)
-        if lang:
-            idx = self.langCombo.findData(lang)
+        if selected_lang:
+            idx = self.langCombo.findData(selected_lang)
             if idx >= 0:
                 self.langCombo.setCurrentIndex(idx)
         self.langCombo.blockSignals(False)
 
-        self._populate_res(res)
-        self._update_status(lang, res, msg)
+        self._update_status(selected_lang, res, msg)
 
     def _refresh_clicked(self):
+        self.refresh_packs()
+
+    def refresh_packs(self):
+        """重新扫描模板，并在后台增量生成派生分辨率。"""
         if self.busy_check():
             self.switched.emit('挂机运行中，不能刷新或切换模板。')
-            return
-        #点"刷新列表"：先重新扫描 pack，再后台从 2K 源生成其它分辨率模板
+            return False
+        #启动和手动刷新共用这条路径，确保全新安装也会生成空的派生模板目录。
         self._refresh()
-        self._scale_async()
+        return self._scale_async()
 
     def _scale_async(self):
         #后台跑素材缩放，不阻塞界面；已有目标会跳过，重复点也不会并发
         if self._scaling:
-            return
+            return False
         self._scaling = True
         self._scale_cancel.clear()
         self.refreshBtn.setEnabled(False)
         self.langCombo.setEnabled(False)
-        self.resCombo.setEnabled(False)
         self.scalingChanged.emit(True)
         def _work():
             try:
@@ -162,42 +220,25 @@ class LanguageSwitcherWidget(QWidget):
                 self.scaleFinished.emit()
         self._scale_thread = threading.Thread(target=_work, daemon=True)
         self._scale_thread.start()
+        return True
 
     def _scale_finished(self):
         self._scaling = False
         self._scale_thread = None
         self.refreshBtn.setEnabled(True)
         self.langCombo.setEnabled(True)
-        self.resCombo.setEnabled(True)
         self._refresh()
+        self.auto_select_resolution(allow_fallback=True, announce=False)
         self.scalingChanged.emit(False)
-
-    def _populate_res(self, current_res):
-        self.resCombo.blockSignals(True)
-        self.resCombo.clear()
-        lang = self.langCombo.currentData()
-        if lang in self.packs:
-            for res, usable in self.packs[lang]:
-                label = res if usable else f'{res}（空）'
-                self.resCombo.addItem(label, res)
-            #优先选 current_res，没有就选第一个可用的
-            pick = self.resCombo.findData(current_res) if current_res else -1
-            if pick < 0:
-                for i, (_r, usable) in enumerate(self.packs[lang]):
-                    if usable:
-                        pick = i
-                        break
-            if pick >= 0:
-                self.resCombo.setCurrentIndex(pick)
-        self.resCombo.blockSignals(False)
 
     def _update_status(self, lang, _res, msg):
         cur = language_switcher.current_selection()
         if cur:
-            base = f'当前激活: {self._lang_label(cur[0])} {cur[1]}'
+            base = f'当前模板：{self._lang_label(cur[0])} · {cur[1]}'
         else:
             base = '当前无激活模板'
-        self.statusLabel.setText(f'{base}  |  {self._localize(msg, lang)}')
+        detail = self._localize(msg, lang)
+        self.statusLabel.setText(f'{base}\n{detail}' if detail else base)
 
     def _localize(self, msg, lang):
         #把消息里出现的语言代码换成中文名，仅用于显示
@@ -207,37 +248,76 @@ class LanguageSwitcherWidget(QWidget):
         return msg.replace(lang + ' ', label + ' ').replace(lang + '/', label + '/')
 
     def _on_lang_activated(self, _idx):
-        #用户选了语言：重填该语言的分辨率（选第一个可用的），然后自动切换过去
-        self._populate_res(None)
-        self._auto_switch()
-
-    def _on_res_activated(self, _idx):
-        #用户选了分辨率：自动切换过去
-        self._auto_switch()
-
-    def _auto_switch(self):
-        if self.busy_check():
-            text = '挂机运行中，不能切换语言或分辨率。'
-            self._refresh()
-            self.switched.emit(text)
-            return
+        #游戏已运行时直接自动匹配；否则沿用当前分辨率，启动挂机前会重新检测。
         lang = self.langCombo.currentData()
-        res = self.resCombo.currentData()
-        if not lang or not res:
-            return
-        #实时查这个 pack 是否可用（缓存的 self.packs 可能是旧的）
-        if not language_switcher.pack_usable(lang, res):
-            text = f'{self._lang_label(lang)} {res} 这个 pack 是空的，没法切换。请先往对应文件夹放入模板图片。'
+        if not language_switcher.remember_language(lang):
+            text = '保存游戏语言失败，请检查 language/active.json 是否可写。'
             self.statusLabel.setText(text)
             self.switched.emit(text)
             return
+        self.auto_select_resolution(allow_fallback=True)
+
+    def auto_select_resolution(self, detected=None, allow_fallback=False, announce=True):
+        if self.busy_check():
+            text = '挂机运行中，不能切换模板。'
+            self._refresh()
+            if announce:
+                self.switched.emit(text)
+            return False, text
+        lang = self.langCombo.currentData()
+        if not lang:
+            text = '没有可用的语言模板。'
+            self.statusLabel.setText(text)
+            if announce:
+                self.switched.emit(text)
+            return False, text
+
+        if detected is None:
+            from src.click import click_behavior
+            detected = click_behavior.get_client_size('MadokaExedra')
+        res = language_switcher.match_client_resolution(lang, detected) if detected else None
+        fallback_used = False
+        if res is None and allow_fallback and detected is None:
+            current = language_switcher.current_selection()
+            current_res = current[1] if current else None
+            usable = [item_res for item_res, ok in language_switcher.list_packs().get(lang, ()) if ok]
+            if current_res in usable:
+                res = current_res
+            elif image_scaler.SOURCE_RES in usable:
+                res = image_scaler.SOURCE_RES
+            elif usable:
+                res = usable[0]
+            fallback_used = res is not None
+        if res is None:
+            if detected:
+                supported = '、'.join(
+                    item_res for item_res, ok in language_switcher.list_packs().get(lang, ()) if ok
+                ) or '无'
+                text = (f'游戏客户区 {detected[0]}x{detected[1]} 无法匹配可用模板。'
+                        f'当前语言支持：{supported}')
+            else:
+                text = '未检测到游戏窗口；启动游戏后会自动选择模板分辨率。'
+            self.statusLabel.setText(text)
+            if announce:
+                self.switched.emit(text)
+            return False, text
+
         ok, msg = language_switcher.switch(lang, res)
         out = self._localize(msg, lang)
         if ok:
-            self._refresh()  #刷新让（空）标记和"当前激活"同步
+            self._refresh()
+            if fallback_used:
+                out = (f'已切换到{self._lang_label(lang)}；暂用 {res} 模板。'
+                       '启动挂机时会按游戏窗口重新检测分辨率。')
+            elif detected:
+                out = (f'已自动匹配 {self._lang_label(lang)} {res} 模板'
+                       f'（游戏客户区 {detected[0]}x{detected[1]}）。')
+            self.statusLabel.setText(out)
         else:
             self._update_status(lang, res, out)
-        self.switched.emit(out)
+        if announce:
+            self.switched.emit(out)
+        return ok, out
 
 
 class mywindow(QWidget):
@@ -261,25 +341,28 @@ class mywindow(QWidget):
         self._update_lock_path = None
         self._closing = False
         self._update_manual = False
+        self._initial_layout_sized = False
+        self._startup_template_refresh_pending = False
 
         #启动时确保 aim 联接可用（aim 被移走时按 config 或第一个可用 pack 自动恢复）
         language_switcher.ensure_active()
 
-        #左上角页面名字
-        self.setWindowTitle('圆哆啦挂机器')
+        self.setWindowTitle('Magia Exedra 自动挂机')
+        self.setObjectName('mainWindow')
         #图标
         self.setWindowIcon(QIcon('./resource/main.ico'))
-        #窗体尺寸
-        self.resize(250,740)
+        self.setMinimumSize(500, 640)
+        self._apply_style()
 
-        #框体顶部的提示
-        self.textedit_1_title = QLabel('输出运行结果的框框')
-        # 用于输出运行日志的框体
         self.textedit_1 = QPlainTextEdit()
+        self.textedit_1.setReadOnly(True)
+        self.textedit_1.setMinimumHeight(150)
+        self.textedit_1.setPlaceholderText('运行消息会显示在这里')
         self.textedit_1.document().setMaximumBlockCount(2000)
         self.debugLog.connect(self._append_raw_log)
+        initial_log_level = load_gui_log_level()
         self._gui_log_handler = GuiLogHandler(self.debugLog.emit)
-        self._gui_log_handler.setLevel(logging.WARNING)
+        self._gui_log_handler.setLevel(getattr(logging, initial_log_level))
         self._gui_log_handler.setFormatter(logging.Formatter(
             '[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s', datefmt='%H:%M:%S',
         ))
@@ -290,10 +373,10 @@ class mywindow(QWidget):
         for meta in get_worker_registry():
             self._entries.append(self._build_worker_entry(meta))
 
-        self.scriptTitle = QLabel('选择挂机脚本')
+        self.scriptTitle = QLabel('挂机模式')
         self.scriptCombo = QComboBox()
-        self.paramStack = QStackedWidget()
-        self.paramStack.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.paramStack = CurrentPageStack()
+        self.paramStack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         for entry in self._entries:
             self.scriptCombo.addItem(entry['meta'].label)
             self.paramStack.addWidget(entry['param_widget'])
@@ -304,61 +387,138 @@ class mywindow(QWidget):
         self._script_changed(self.scriptCombo.currentIndex())
 
         #停止按钮，按下启动停止进程，会调用所有工作线程的 stop()
-        self.button_1 = QPushButton('停下当前运行的脚本')
+        self.button_1 = QPushButton('停止挂机')
+        self.button_1.setObjectName('stopButton')
         self.button_1.clicked.connect(self._stop_automation)
+        self.startButton.setObjectName('startButton')
 
-        #检查更新：点击触发；启动时也会自动后台跑一次
-        self.checkUpdateBtn = QPushButton('检查更新')
-        self.checkUpdateBtn.clicked.connect(self._check_update)
-        #勾选后检查更新时包含预发布（beta）版本；默认不勾选，只更新到正式版
-        self.betaCheckBox = QCheckBox('更新至 beta 版')
-        self.betaCheckBox.setToolTip('勾选后检查更新会包含预发布（beta）版本；不勾选则只更新到正式版')
-        self.logLevelLabel = QLabel('GUI 日志等级')
-        self.logLevelCombo = QComboBox()
-        self.logLevelCombo.addItems(['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'])
-        self.logLevelCombo.setCurrentText('WARNING')
+        #应用级选项集中放进设置对话框，主界面只保留一个入口。
+        from src.update_check import VERSION, is_prerelease_version
+        self.settingsDialog = SettingsDialog(
+            initial_log_level, is_prerelease_version(VERSION), self,
+        )
+        self.logLevelCombo = self.settingsDialog.logLevelCombo
+        self.betaCheckBox = self.settingsDialog.betaCheckBox
+        self.checkUpdateBtn = self.settingsDialog.checkUpdateBtn
+        self.settingsButton = QPushButton('设置')
+        self.settingsButton.setFixedWidth(90)
+        self.settingsButton.clicked.connect(self._open_settings)
+        self.checkUpdateBtn.clicked.connect(self._check_update_from_settings)
         self.logLevelCombo.currentTextChanged.connect(self._change_log_level)
         self.updateChecked.connect(self._on_update_checked)
         self.updateProgress.connect(self._on_update_progress)
         self.updateReady.connect(self._on_update_ready)
         self.updateFailed.connect(self._on_update_failed)
 
-        #语言/分辨率切换控件，切换 aim 联接指向
+        #语言由用户选择，分辨率按游戏客户区自动选择。
         self.lang_switcher = LanguageSwitcherWidget(self._automation_running)
         self.lang_switcher.switched.connect(self._append_log)
         self.lang_switcher.switched.connect(lambda: self.setWindowIcon(QIcon('./resource/main.ico')))
         self.lang_switcher.scalingChanged.connect(self._scaling_changed)
+        self.lang_switcher.actionRow.addWidget(self.settingsButton)
 
-        #主页布局
         self.mainlayout = QVBoxLayout()
+        self.mainlayout.setContentsMargins(18, 16, 18, 16)
+        self.mainlayout.setSpacing(12)
 
-        #顶部提示框
-        self.mainlayout.addWidget(self.textedit_1_title)
-        self.mainlayout.addWidget(self.textedit_1)
-        #停止按钮
-        self.mainlayout.addWidget(self.button_1)
+        run_group = QGroupBox('运行设置')
+        run_layout = QVBoxLayout()
+        run_layout.setSpacing(8)
+        run_layout.addWidget(self.scriptTitle)
+        run_layout.addWidget(self.scriptCombo)
+        run_layout.addWidget(self.paramStack)
+        action_row = QHBoxLayout()
+        action_row.addWidget(self.startButton, 2)
+        action_row.addWidget(self.button_1, 1)
+        run_layout.addLayout(action_row)
+        run_group.setLayout(run_layout)
+        self.mainlayout.addWidget(run_group)
 
-        #语言/分辨率切换
-        self.mainlayout.addWidget(self.lang_switcher)
+        template_group = QGroupBox('模板设置')
+        template_layout = QVBoxLayout()
+        template_layout.addWidget(self.lang_switcher)
+        template_group.setLayout(template_layout)
+        self.mainlayout.addWidget(template_group)
 
-        #脚本选择区：只展示当前选择脚本的参数，新增模式不会继续向下堆叠界面。
-        self.mainlayout.addWidget(self.scriptTitle)
-        self.mainlayout.addWidget(self.scriptCombo)
-        self.mainlayout.addWidget(self.paramStack)
-        self.mainlayout.addWidget(self.startButton)
-        log_level_row = QHBoxLayout()
-        log_level_row.addWidget(self.logLevelLabel)
-        log_level_row.addWidget(self.logLevelCombo)
-        self.mainlayout.addLayout(log_level_row)
-        update_row = QHBoxLayout()
-        update_row.addWidget(self.checkUpdateBtn)
-        update_row.addWidget(self.betaCheckBox)
-        self.mainlayout.addLayout(update_row)
+        log_group = QGroupBox('运行日志')
+        log_layout = QVBoxLayout()
+        log_layout.addWidget(self.textedit_1)
+        log_group.setLayout(log_layout)
+        self.mainlayout.addWidget(log_group, 1)
 
         self.setLayout(self.mainlayout)
+        self.mainlayout.activate()
+        self.resize(560, 820)
 
-        #启动时自动后台检查一次更新（不阻塞界面，结果进日志）
+        #先增量生成派生模板，再检测游戏，避免全新安装时对应分辨率仍为空。
+        QTimer.singleShot(0, self._refresh_templates_at_startup)
         self._check_update_async()
+
+    def _apply_style(self):
+        self.setStyleSheet('''
+            QWidget {
+                color: #20242a;
+                font-family: "Microsoft YaHei UI";
+                font-size: 13px;
+            }
+            QWidget#mainWindow { background: #f4f6f8; }
+            QDialog#settingsDialog { background: #f4f6f8; }
+            QLabel#secondaryText { color: #5d6673; }
+            QGroupBox {
+                background: #ffffff;
+                border: 1px solid #d9dee5;
+                border-radius: 6px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 5px;
+                color: #343a43;
+                background: #f4f6f8;
+                font-weight: 600;
+            }
+            QComboBox, QLineEdit {
+                min-height: 32px;
+                background: #ffffff;
+                border: 1px solid #c9d0d9;
+                border-radius: 4px;
+                padding: 0 8px;
+            }
+            QComboBox:focus, QLineEdit:focus { border-color: #2474c6; }
+            QPushButton {
+                min-height: 32px;
+                background: #ffffff;
+                border: 1px solid #bcc5d0;
+                border-radius: 4px;
+                padding: 0 12px;
+            }
+            QPushButton:hover { background: #eef2f6; }
+            QPushButton:disabled { color: #939ba6; background: #eceff2; }
+            QPushButton#startButton {
+                background: #1769aa;
+                color: #ffffff;
+                border-color: #1769aa;
+                font-weight: 600;
+            }
+            QPushButton#startButton:hover { background: #12598f; }
+            QPushButton#stopButton {
+                color: #b42318;
+                border-color: #d9a5a0;
+            }
+            QPushButton#stopButton:hover { background: #fff1f0; }
+            QPlainTextEdit {
+                background: #171a1f;
+                color: #e7ebf0;
+                border: 1px solid #2a3038;
+                border-radius: 4px;
+                padding: 8px;
+                font-family: Consolas, "Microsoft YaHei UI";
+            }
+            QRadioButton { spacing: 6px; min-height: 26px; }
+            QCheckBox { spacing: 7px; }
+        ''')
 
     def _build_worker_entry(self, meta):
         #为一个挂机模式创建 worker 和独立参数页，返回 entry 字典
@@ -371,6 +531,8 @@ class mywindow(QWidget):
 
         #参数控件区
         param_layout = QVBoxLayout()
+        param_layout.setContentsMargins(0, 0, 0, 0)
+        param_layout.setSpacing(8)
         getters = {}
         controls = []
         for spec in meta.params:
@@ -400,13 +562,22 @@ class mywindow(QWidget):
         self.paramStack.setCurrentIndex(index)
         current_page = self.paramStack.currentWidget()
         if current_page is not None:
-            self.paramStack.setFixedHeight(current_page.sizeHint().height())
-        self.startButton.setText(f"启动：{self._entries[index]['meta'].label}")
+            current_page.updateGeometry()
+        self.paramStack.updateGeometry()
+        self.startButton.setText('启动挂机')
+        self.startButton.setToolTip(self._entries[index]['meta'].label)
 
     def _start_selected_worker(self):
         index = self.scriptCombo.currentIndex()
         if 0 <= index < len(self._entries):
             self._start_worker(self._entries[index])
+
+    def _open_settings(self):
+        self.settingsDialog.exec()
+
+    def _check_update_from_settings(self):
+        self.settingsDialog.accept()
+        self._check_update()
 
     def _check_update(self):
         self._check_update_async(manual=True)
@@ -624,17 +795,22 @@ class mywindow(QWidget):
 
     def _change_log_level(self, level):
         self._gui_log_handler.setLevel(getattr(logging, level))
-        self._append_log(f'GUI 日志等级已切换为 {level}；用户操作消息不受过滤。')
+        if save_gui_log_level(level):
+            self._append_log(f'GUI 日志等级已切换并记忆为 {level}；用户操作消息不受过滤。')
+        else:
+            self._append_log(f'GUI 日志等级已切换为 {level}，但保存失败；下次启动将使用原设置。')
 
     def _build_param_widget(self, spec):
         #根据 ParamSpec.kind 生成对应控件，返回 (QLayout, getter函数, 可禁用控件列表)
         layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
         label = QLabel(spec.label)
         layout.addWidget(label)
         controls = [label]
 
         if spec.kind == 'choice':
-            #单选按钮组，每 3 个一行
+            #单选按钮组，每 4 个一行
             group = QButtonGroup(self)
             group.setExclusive(True)
             buttons = []
@@ -647,7 +823,7 @@ class mywindow(QWidget):
             row = QHBoxLayout()
             for i, btn in enumerate(buttons):
                 row.addWidget(btn)
-                if (i + 1) % 3 == 0:
+                if (i + 1) % 4 == 0:
                     layout.addLayout(row)
                     row = QHBoxLayout()
             if row.count() > 0:
@@ -709,14 +885,14 @@ class mywindow(QWidget):
         minus_btn = QPushButton('-1')
         plus_btn = QPushButton('+1')
         max_btn = QPushButton('最大')
-        min_btn.setFixedWidth(40)
-        minus_btn.setFixedWidth(30)
-        plus_btn.setFixedWidth(30)
-        max_btn.setFixedWidth(40)
+        min_btn.setFixedWidth(56)
+        minus_btn.setFixedWidth(40)
+        plus_btn.setFixedWidth(40)
+        max_btn.setFixedWidth(56)
         value_input = QLineEdit(str(default_num))
         value_input.setValidator(QIntValidator(min_num, max_num, self))
         value_input.setAlignment(Qt.AlignCenter)
-        value_input.setFixedWidth(40)
+        value_input.setFixedWidth(52)
 
         def current_num():
             text = value_input.text()
@@ -745,6 +921,45 @@ class mywindow(QWidget):
     def _update_busy(self):
         return self._update_state in ('downloading', 'extracting', 'ready', 'closing')
 
+    def _refresh_templates_at_startup(self):
+        if self._closing:
+            return
+        self._startup_template_refresh_pending = True
+        if not self.lang_switcher.refresh_packs():
+            self._startup_template_refresh_pending = False
+            self._detect_game_at_startup()
+
+    def _detect_game_at_startup(self):
+        if self._closing:
+            return
+        from src.click import click_behavior
+        detected = click_behavior.get_client_size('MadokaExedra')
+        if detected is None:
+            lang = self.lang_switcher.langCombo.currentData()
+            label = self.lang_switcher._lang_label(lang) if lang else '未选择'
+            text = f'未检测到游戏运行。已记忆游戏语言：{label}。'
+            self.lang_switcher.statusLabel.setText(text)
+            self._append_log(text)
+            return
+        ok, text = self.lang_switcher.auto_select_resolution(
+            detected=detected, announce=False,
+        )
+        self._append_log(text)
+        if not ok:
+            self._append_log('已检测到游戏，但无法自动选择匹配的模板分辨率。')
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._initial_layout_sized:
+            self._initial_layout_sized = True
+            QTimer.singleShot(0, self._resize_to_layout_hint)
+
+    def _resize_to_layout_hint(self):
+        self.mainlayout.invalidate()
+        self.mainlayout.activate()
+        hint = self.sizeHint()
+        self.resize(max(self.width(), 560, hint.width()), max(self.height(), 760, hint.height()))
+
     def _refresh_control_state(self):
         if not hasattr(self, 'checkUpdateBtn'):
             return
@@ -759,6 +974,7 @@ class mywindow(QWidget):
                 control.setEnabled(controls_enabled)
         self.lang_switcher.setEnabled(controls_enabled)
         checking = self._update_state == 'checking'
+        self.settingsButton.setEnabled(not update_busy and not self._closing)
         self.checkUpdateBtn.setEnabled(not checking and not update_busy and not self._closing)
         self.betaCheckBox.setEnabled(not checking and not update_busy and not self._closing)
 
@@ -835,7 +1051,18 @@ class mywindow(QWidget):
         if click_behavior.find_win('MadokaExedra') is None:
             self._append_log('未找到游戏窗口 MadokaExedra，本次挂机已停止。请先启动游戏。')
             return
-        #识别游戏窗口分辨率并与当前模板 pack 容差比对（标题栏/边框/DPI 的小幅偏差可容忍）
+        detected = click_behavior.get_client_size('MadokaExedra')
+        if detected is None:
+            self._append_log('未能读取游戏客户区尺寸，本次挂机已停止。')
+            return
+        switched, switch_message = self.lang_switcher.auto_select_resolution(
+            detected=detected, announce=False,
+        )
+        self._append_log(switch_message)
+        if not switched:
+            self._append_log('无法为当前游戏窗口选择安全的模板分辨率，本次挂机未启动。')
+            return
+        #自动切换后仍复核窗口与模板，避免外部进程同时改变 aim。
         res_info = click_action.detect_window_resolution()
         self._append_log(res_info['message'])
         if not res_info['matched']:
@@ -886,6 +1113,9 @@ class mywindow(QWidget):
                     c.setEnabled(False)
         elif not self._automation_running():
             self._refresh_control_state()
+        if not scaling and self._startup_template_refresh_pending:
+            self._startup_template_refresh_pending = False
+            QTimer.singleShot(0, self._detect_game_at_startup)
 
 
 if __name__ == '__main__':

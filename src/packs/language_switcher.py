@@ -285,6 +285,43 @@ def list_packs():
     return result
 
 
+def match_client_resolution(lang, client_size, tolerance=0.1):
+    """按游戏客户区尺寸匹配当前语言下最近的可用模板分辨率。"""
+    if not isinstance(lang, str) or not isinstance(client_size, (tuple, list)) \
+            or len(client_size) != 2:
+        return None
+    try:
+        detected_width, detected_height = (int(client_size[0]), int(client_size[1]))
+        tolerance = float(tolerance)
+    except (TypeError, ValueError):
+        return None
+    if detected_width <= 0 or detected_height <= 0 or not 0 <= tolerance <= 1:
+        return None
+
+    candidates = []
+    for res, usable in list_packs().get(lang, ()):
+        if not usable:
+            continue
+        try:
+            width_text, height_text = res.lower().split('x')
+            width, height = int(width_text), int(height_text)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        width_margin = max(40, round(width * tolerance))
+        height_margin = max(40, round(height * tolerance))
+        if abs(detected_width - width) > width_margin \
+                or abs(detected_height - height) > height_margin:
+            continue
+        distance = abs(detected_width - width) / width \
+            + abs(detected_height - height) / height
+        candidates.append((
+            distance,
+            abs(detected_width - width) + abs(detected_height - height),
+            res,
+        ))
+    return min(candidates)[2] if candidates else None
+
+
 def _read_config():
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -315,6 +352,30 @@ def _write_config(lang, res):
                 os.remove(temp_path)
             except OSError:
                 pass
+
+
+def preferred_language():
+    """返回用户最后选择的可用语言；旧配置无效时回退到当前模板语言。"""
+    lang, _res = _read_config()
+    if lang in list_packs():
+        return lang
+    current = current_selection()
+    return current[0] if current else None
+
+
+def remember_language(lang):
+    """立即保存语言偏好；分辨率仅作为兼容旧配置的恢复候选。"""
+    packs = list_packs()
+    if lang not in packs:
+        return False
+    _old_lang, old_res = _read_config()
+    current = current_selection()
+    candidates = [old_res, current[1] if current else None, "2560x1440"]
+    candidates.extend(res for res, usable in packs[lang] if usable)
+    for res in candidates:
+        if res and any(item_res == res and usable for item_res, usable in packs[lang]):
+            return _write_config(lang, res)
+    return False
 
 
 def current_selection():

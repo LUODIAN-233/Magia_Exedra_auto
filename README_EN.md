@@ -25,12 +25,15 @@
 - Both modes support a configurable stamina-potion count and stop when it is exhausted
 - Supports English/Japanese templates at `720p` / `1080p` / `2K` / `4K`
 - Compares every numbered variant in a template group against the same frame and clicks only the highest-scoring candidate in the game window
+- Before a template click, the target is sampled three times over 0.6 seconds and is clicked only when all samples recognize it at a stable center; the mouse does not move during confirmation
 - Stops safely when a normal screen is not recognized within 60 seconds or a battle within 30 minutes
-- Checks the game window, resolution, and required templates before starting to avoid obvious misclicks
+- Detects the game client area, automatically selects the closest usable template resolution, and validates required templates before starting
 - Pauses on keyboard activity or large mouse movement and resumes after five seconds of user inactivity
 - While awaiting a clickable template, every five-second miss observes only the game client area for two seconds; over 50% changed game pixels skip that recovery click as likely battle animation, otherwise the bot clicks once at its last action position. For flows with declared next steps, either a normal click or a recovery click counts as successful only after the next step is recognized; if it has not appeared but the current step remains, the bot clicks the current step redundantly and continues the five-second cycle
-- The GUI can switch between `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` log levels at runtime
+- The main-window `设置` entry contains the GUI log level, beta update channel, and manual update check
+- The GUI log level is saved to `settings.json` and restored on the next startup
 - Supports stable/beta update checks; release builds can safely install validated update packages
+- Prerelease builds select `更新至 beta 版` by default and use the beta channel for automatic update checks
 
 ## Download
 
@@ -75,12 +78,14 @@ See [Wiki · Run from source and build](https://github.com/LUODIAN-233/Magia_Exe
 
 ## Template Settings
 
-- Selecting a language and resolution switches **automatically**
+- Selecting a language switches automatically; resolution does not require manual configuration
+- The app remembers the last game language and checks for the game window at startup; the template status reports when the game is not running
+- When automation starts, the app selects matching `720p` / `1080p` / `2K` / `4K` templates from the game client size
 - The visible Chinese labels `英语` and `日语` correspond to `EN` and `JP`
 - `（空）` means that the template pack is currently unavailable
-- `刷新列表` generates `720p` / `1080p` / `4K` templates from the original 2K pack
-- Derived templates use interpolation suited to real-time game scaling; after upgrading, click `刷新列表` once to rebuild existing derived packs
-- The game language and window resolution should match the active template pack
+- On every launch, the app refreshes the template list and incrementally generates `720p` / `1080p` / `4K` templates from the original 2K pack; use `刷新列表` to refresh manually
+- Derived templates use interpolation suited to real-time game scaling; the first launch after an upgrade automatically checks and rebuilds invalid templates
+- An unknown resolution or unavailable matching pack blocks automation startup
 
 ## Before Use
 
