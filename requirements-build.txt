@@ -1,0 +1,4 @@
+# 安装发行构建所需的运行时依赖和固定版本构建工具：
+# pip install -r requirements-build.txt
+-r requirements.txt
+pyinstaller==6.21.0

@@ -94,6 +94,12 @@ class CrystalisWorker(BaseWorker):
         check_win = 1  # 这东西代表看到 retry，1 是没看到，2 是看到
         deadline = time.monotonic() + BATTLE_TIMEOUT
         while check_win == 1 and self._running() and time.monotonic() < deadline:
+            #retry 可能在 result 消失后延迟出现，因此每轮都要独立检查，不能只在刚点击 result 时检查。
+            check_win = click_action.find_item_with_result(
+                self, './aim/crystalis/retry', 'retry'
+            )
+            if check_win == 2:
+                break
             # 战斗结束后，右上角会出现 result，点击整个右侧屏幕的任何地方几次就会让它出现 retry
             #result 的有效位置在客户区右侧；排除标题栏和左侧静态画面的持续假阳性。
             result = click_action.click_item_with_result(
@@ -108,7 +114,9 @@ class CrystalisWorker(BaseWorker):
                 self.signal.emit(str('result没有找到，还在战斗状态'))
 
             if result == 2:
-                check_win = click_action.find_item_with_result(self, f'./aim/crystalis/retry', 'retry')
+                check_win = click_action.find_item_with_result(
+                    self, './aim/crystalis/retry', 'retry'
+                )
                 self.signal.emit(str(f'result被点击过一次，尝试寻找retry，具体的状态是{check_win}，1是没有找到，2是找到了'))
             if check_win == 1 and self._wait(0.5):
                 return

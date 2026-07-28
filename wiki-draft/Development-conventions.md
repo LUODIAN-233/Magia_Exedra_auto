@@ -14,7 +14,8 @@ Language: [简体中文](./首页) · [English](./Home_EN) · [日本語](./ホ�
 - **Template-action return values are `2`/`1`, not booleans.** `2` means success/found/clicked; `1` means not found/keep trying/cancelled. `find_win()` is the exception: it returns a geometry tuple or `None`
 - **Template filenames use the `picture` argument, not `name`.** Starting at `<picture>_1.png`, `click_item_with_result(self, picture, name)` and `find_item_with_result(...)` discover consecutive variants until the first missing number. `name` is only a log label. Numbering must start at `_1` and remain contiguous
 - Every variant in a template group must be compared against the same captured frame, and only the globally highest-scoring candidate in the group may be acted on; do not recapture per template or return early in discovery order
-- Apply the same 3x3 `GaussianBlur` to the screenshot and templates before `TM_SQDIFF_NORMED`; the match score must be strictly `> 0.8`, and exactly `0.8` is not a match
+- Apply the same 3x3 `GaussianBlur` to the screenshot and templates before `TM_SQDIFF_NORMED`. Every winning PNG must strictly exceed its independently resolved threshold from `resource/template_confidence.txt`; equality is not a match, and a missing or invalid threshold rejects recognition
+- All confirmation frames at 0/300/600 ms must compare the complete template group again rather than tracking only the first frame's winner. Threshold resolution must reuse the worker's startup-locked `expected_pack`
 
 ## Run/stop state
 
@@ -54,8 +55,9 @@ The worker must be no-argument-constructible and must route `run()` through `_ru
 
 ## User-input protection and wait recovery
 
-- Keyboard input or cumulative large mouse movement pauses automation; it resumes only after five continuous seconds of user inactivity
+- Keyboard input, real mouse-button activity, or cumulative mouse travel pauses automation; it resumes only after five continuous seconds of user inactivity
 - Every new PyAutoGUI input path must call `_wait_for_user_idle()` first, perform automated mouse actions inside an `_automation_input()` context, and record the last automation position after success
+- The last automation position is stored relative to the game client. Window movement rebases it; a client-size change or out-of-client coordinate rejects the recovery click
 - During a single click-template wait, every continuous five-second miss must trigger a two-second observation of the game client area. If more than 50% of pixels change, treat it as battle animation and skip only that recovery cycle; otherwise perform one recovery click at the last safe automation position
 - This five-second recovery cycle must continue until the template succeeds, the wait times out, or the task is cancelled. It must never be implemented as a one-time check
 
@@ -76,16 +78,17 @@ The game window title is hardcoded as `MadokaExedra`. Changing it requires updat
 
 ## Git and local artifacts
 
-- `.gitignore` ignores `aim/`, `language/active.json`, `__pycache__/`, `*.pyc`, and `logs/`
-- Derived PNGs, `.source_hashes.json`, `build/`, `dist/`, and generated `main.spec` may appear untracked; never stage them accidentally
+- `.gitignore` ignores `aim/`, `language/active.json`, root `settings.json`, `__pycache__/`, `*.pyc`, and `logs/`
+- `.gitignore` also ignores derived PNGs, `.source_hashes.json`, `.release-venv-*/`, `build/`, `dist/`, and generated `*.spec` files; committed `.gitkeep` pack placeholders remain tracked
 - `tools/ImageMagick/` is committed and required by release packages
 - The repository has `main`, `beta`, and potentially other branches. Never infer target branch or release channel from the current branch alone
 - Commit messages are plain-language Chinese with a concise subject and body
 
 ## Checklist
 
-There is no formal test suite, lint/typecheck config, or CI. After changes, run every applicable non-game check manually:
+Standard-library regression tests live under `tests/`; there is currently no lint/typecheck config or CI. After changes, run every applicable non-game check:
 
+- `python -B -m unittest discover -s tests -v`
 - Python compile/import checks
 - Worker registry and template validation
 - Update ZIP/extraction checks

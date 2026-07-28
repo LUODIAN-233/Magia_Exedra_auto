@@ -16,10 +16,10 @@ class UserActivityGuard:
         self._lock = threading.Lock()
         self._automation_depth = 0
         self._last_activity = 0.0
+        self._mouse_travel = 0
         self._paused = False
         self._thread = None
-        self._anchor = self._cursor_position()
-        self._last_position = self._anchor
+        self._last_position = self._cursor_position()
 
     @staticmethod
     def _cursor_position():
@@ -30,9 +30,14 @@ class UserActivityGuard:
 
     @staticmethod
     def _keyboard_active():
-        # 1-6 是鼠标键；只监测键盘，脚本自己的鼠标点击不会触发暂停。
+        # 1-6 是鼠标键，由 _mouse_active() 单独读取。
         get_key_state = ctypes.windll.user32.GetAsyncKeyState
         return any(get_key_state(key) & 0x8001 for key in range(7, 256))
+
+    @staticmethod
+    def _mouse_active():
+        get_key_state = ctypes.windll.user32.GetAsyncKeyState
+        return any(get_key_state(key) & 0x8001 for key in range(1, 7))
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -42,8 +47,8 @@ class UserActivityGuard:
         with self._lock:
             self._automation_depth = 0
             self._last_activity = 0.0
+            self._mouse_travel = 0
             self._paused = False
-            self._anchor = position
             self._last_position = position
         self._thread = threading.Thread(target=self._monitor, daemon=True)
         self._thread.start()
@@ -67,37 +72,47 @@ class UserActivityGuard:
     def _record_activity(self):
         with self._lock:
             self._last_activity = time.monotonic()
+            self._mouse_travel = 0
         self._set_paused(True)
+
+    def _observe_mouse_movement(self, position):
+        """累计非自动化鼠标轨迹；返回本次观察是否应触发暂停。"""
+        if position is None:
+            return False
+        with self._lock:
+            if self._automation_depth > 0:
+                return False
+            previous = self._last_position
+            self._last_position = position
+            if previous is None:
+                return False
+            step = max(abs(position[0] - previous[0]), abs(position[1] - previous[1]))
+            if self._paused:
+                return step >= 3
+            self._mouse_travel += step
+            return self._mouse_travel >= self.mouse_threshold
 
     def _monitor(self):
         while not self._stop.wait(0.05):
             now = time.monotonic()
             position = self._cursor_position()
             keyboard_active = self._keyboard_active()
+            mouse_active = self._mouse_active()
             with self._lock:
                 automated = self._automation_depth > 0
-                paused = self._paused
 
-            if keyboard_active:
+            if keyboard_active or (mouse_active and not automated):
                 self._record_activity()
-            elif not automated and position is not None:
-                if paused:
-                    previous = self._last_position
-                    if previous is not None and max(
-                            abs(position[0] - previous[0]), abs(position[1] - previous[1])) >= 3:
-                        self._record_activity()
-                elif self._anchor is not None and max(
-                        abs(position[0] - self._anchor[0]), abs(position[1] - self._anchor[1])) >= self.mouse_threshold:
-                    self._record_activity()
-
-            if position is not None:
-                self._last_position = position
+            elif self._observe_mouse_movement(position):
+                self._record_activity()
 
             with self._lock:
                 paused = self._paused
                 last_activity = self._last_activity
             if paused and now - last_activity >= self.idle_seconds:
-                self._anchor = position
+                with self._lock:
+                    self._last_position = position
+                    self._mouse_travel = 0
                 self._set_paused(False)
 
     def wait_until_idle(self, is_cancelled):
@@ -119,5 +134,5 @@ class UserActivityGuard:
             position = self._cursor_position()
             with self._lock:
                 self._automation_depth = max(0, self._automation_depth - 1)
-                self._anchor = position
                 self._last_position = position
+                self._mouse_travel = 0

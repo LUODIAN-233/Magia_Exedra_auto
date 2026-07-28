@@ -8,7 +8,7 @@ import pyautogui
 import pywinctl as pwc
 from contextlib import nullcontext
 
-from . import template_confidence
+from src.core.automation_position import capture_client_position, resolve_client_position
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,9 @@ def _automation_input(callback):
 def _record_automation_position(callback, position):
     worker = _worker_from_callback(callback)
     if worker is not None:
-        worker._last_automation_position = position
+        worker._last_automation_position = capture_client_position(
+            position, get_client_region('MadokaExedra'),
+        )
 
 
 def _capture_region(region):
@@ -93,16 +95,17 @@ def click_last_automation_position(worker):
         return 1
     if not _wait_for_user(can_click):
         return 1
-    position = getattr(worker, '_last_automation_position', None)
-    if position is None:
+    record = getattr(worker, '_last_automation_position', None)
+    if record is None:
         logger.debug('没有上一次自动化位置，跳过恢复点击')
         return 1
     window = find_win('MadokaExedra')
     if window is None:
         return 1
-    left, top, width, height = window
-    if not (left <= position[0] < left + width and top <= position[1] < top + height):
-        logger.warning('上一次自动化位置已不在游戏窗口内，跳过恢复点击: %s', position)
+    client_region = get_client_region('MadokaExedra')
+    position = resolve_client_position(record, client_region)
+    if position is None:
+        logger.warning('游戏客户区尺寸已变化或旧位置无效，跳过恢复点击: %s', record)
         return 1
     return click_auto(position, can_click)
 
@@ -273,15 +276,6 @@ def best_competing_template_match(selected, template_groups, radius=3):
     return label, text_label, avg, score, text_score, path, text_path
 
 
-def get_xy(img_model_path):
-    """
-    找到需要点击什么的坐标
-    :param img_model_path:输入需要找的图片
-    :return:坐标,匹配度（1是完全，0是不匹配）
-    """
-    avg, score, _path = best_template_match([img_model_path])
-    return avg, score
-
 def click_auto(var_avg, can_click=None):
     """
     接受要点的坐标然后点
@@ -309,55 +303,6 @@ def click_auto(var_avg, can_click=None):
     #点击完成等待0.5秒，防止奇怪的问题发生
     time.sleep(0.1)
     return 2
-
-
-def routine (img_model_path,name, can_click=None):
-    """
-    点击的事实上的使用函数
-    :param img_model_path:图片
-    :param name:这个没有实际作用，只是一个提示
-    :return:输出2代表点了，输出1代表没点
-    """
-    if not _wait_for_user(can_click):
-        return int(1)
-    avg,match_rate= get_xy(img_model_path)
-
-    threshold = template_confidence.threshold_for(img_model_path)
-    if avg is not None and threshold is not None and match_rate > threshold:
-        if can_click is not None and not can_click():
-            logger.debug('任务已停止，不点击%s', name)
-            return int(1)
-        logger.debug('点击%s', name)
-        return int(click_auto(avg, can_click))
-    else:
-        logger.debug('匹配率太低，不点击%s', name)
-        return int(1)
-
-
-def routine_only_find(img_model_path, name, can_find=None):
-    """
-    点击的事实上的使用函数
-    :param img_model_path:图片
-    :param name:这个没有实际作用，只是一个提示
-    :return:输出2代表点了，输出1代表没点
-    """
-    if can_find is not None and not can_find():
-        return int(1)
-    if not _wait_for_user(can_find):
-        return int(1)
-    avg,match_rate= get_xy(img_model_path)
-    if can_find is not None and not can_find():
-        return int(1)
-
-    threshold = template_confidence.threshold_for(img_model_path)
-    if avg is not None and threshold is not None and match_rate > threshold:
-        logger.debug('存在%s元素，不会点击', name)
-        # click_auto(avg)
-        return int(2)
-    else:
-        logger.debug('匹配率太低，不存在%s元素，这个不会进行点击', name)
-        return int(1)
-
 def get_client_size(title='MadokaExedra'):
     """
     返回游戏窗口客户区（实际渲染区域，不含标题栏/边框）的 (width, height)。
@@ -441,8 +386,3 @@ def find_win(title):
         logger.warning("游戏窗口尺寸无效: %sx%s", width, height)
         return None
     return left, top, width, height
-
-
-
-
-#routine("./aim/2222.png",'bbb')
