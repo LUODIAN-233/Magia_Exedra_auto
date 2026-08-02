@@ -869,10 +869,7 @@ class mywindow(QWidget):
                 timestamp, level, source, line,
             )
             if replace:
-                block = self.textedit_1.document().lastBlock()
-                cursor = QTextCursor(block)
-                cursor.select(QTextCursor.BlockUnderCursor)
-                cursor.insertText(rendered)
+                self._replace_last_gui_line(rendered)
             else:
                 self.textedit_1.appendPlainText(rendered)
         scrollbar = self.textedit_1.verticalScrollBar()
@@ -880,6 +877,13 @@ class mywindow(QWidget):
         if not self._log_scroll_pending:
             self._log_scroll_pending = True
             QTimer.singleShot(0, self._scroll_log_to_bottom)
+
+    def _replace_last_gui_line(self, rendered):
+        block = self.textedit_1.document().lastBlock()
+        cursor = QTextCursor(block)
+        cursor.movePosition(QTextCursor.StartOfBlock)
+        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+        cursor.insertText(rendered)
 
     def _scroll_log_to_bottom(self):
         self._log_scroll_pending = False
