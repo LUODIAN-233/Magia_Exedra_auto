@@ -59,9 +59,12 @@ class BaseWorker(QThread):
     def _emit_log(self, message, level='INFO'):
         self.logSignal.emit(str(message), str(level).upper())
 
-    def _activity_changed(self, paused):
+    def _activity_changed(self, paused, reason=None):
         if paused:
-            self.signal.emit('检测到用户键盘操作或大幅移动鼠标，挂机暂停；停止操作 5 秒后自动继续。')
+            detail = reason or '未能识别具体输入'
+            self.signal.emit(
+                f'检测到用户输入：{detail}，挂机暂停；停止操作 5 秒后自动继续。'
+            )
         else:
             self.signal.emit('用户已停止操作 5 秒，挂机继续运行。')
 

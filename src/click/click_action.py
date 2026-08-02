@@ -34,9 +34,20 @@ def _automation_input(callback):
 
 
 def _record_automation_position(callback, position):
-    worker = _worker_from_callback(callback)
-    if worker is not None:
-        worker._last_automation_position = position
+    click_behavior._record_automation_position(callback, position)
+
+
+def _emit_template_click(self, message):
+    emit = getattr(self, '_emit_log', None)
+    if emit is not None:
+        emit(message, 'INFO')
+    else:
+        logger.info(message)
+
+
+def _template_selection(self):
+    selection = getattr(self, 'expected_pack', None)
+    return selection if selection is not None else language_switcher.current_selection()
 
 
 def _wait(self, seconds):
@@ -47,19 +58,19 @@ def _wait(self, seconds):
     return False
 
 
-def _template_match_accepted(detected):
+def _template_match_accepted(detected, selection):
     if not detected or detected[0] is None or detected[2] is None:
         return False
-    threshold = template_confidence.threshold_for(detected[2])
+    threshold = template_confidence.threshold_for(detected[2], selection)
     return threshold is not None and detected[1] > threshold
 
 
-def _competing_match_accepted(detected, selected):
+def _competing_match_accepted(detected, selected, selection):
     if not detected or len(detected) < 7:
         return False
     label, text_label, point, score, text_score, path, text_path = detected
-    full_threshold = template_confidence.threshold_for(path)
-    text_threshold = template_confidence.threshold_for(text_path)
+    full_threshold = template_confidence.threshold_for(path, selection)
+    text_threshold = template_confidence.threshold_for(text_path, selection)
     return label == selected and text_label == selected and point is not None \
         and full_threshold is not None and text_threshold is not None \
         and score > full_threshold and text_score > text_threshold
@@ -83,7 +94,7 @@ def _click_stability_radius():
     return max(CLICK_STABILITY_MIN_RADIUS, round(min(size) * CLICK_STABILITY_RATIO))
 
 
-def _confirm_stable_detection(self, detect_once, accepted, position, name, confirm_once=None):
+def _confirm_stable_detection(self, detect_once, accepted, position, name):
     """要求目标在 0.6 秒内三次采样都命中同一区域，确认期间不移动鼠标。"""
     can_continue = getattr(self, '_running', None)
     radius = _click_stability_radius()
@@ -94,7 +105,7 @@ def _confirm_stable_detection(self, detect_once, accepted, position, name, confi
             return None
         if not _wait_for_user(can_continue):
             return None
-        detected = confirm_once(samples[0][0]) if samples and confirm_once else detect_once()
+        detected = detect_once()
         point = position(detected)
         if not accepted(detected) or point is None:
             logger.debug('%s稳定性确认失败：第%d/%d次采样未命中',
@@ -124,6 +135,7 @@ def _confirm_stable_detection(self, detect_once, accepted, position, name, confi
 def click_item_with_result(self, picture, name, search_region=None):
     files = _template_files(picture)
     can_click = getattr(self, '_running', None)
+    selection = _template_selection(self)
     if can_click is not None and not can_click():
         return 1
     if not files or not _wait_for_user(can_click):
@@ -131,12 +143,9 @@ def click_item_with_result(self, picture, name, search_region=None):
     confirmed = _confirm_stable_detection(
         self,
         lambda: click_behavior.best_template_match(files, search_region=search_region),
-        _template_match_accepted,
+        lambda detected: _template_match_accepted(detected, selection),
         lambda detected: detected[0],
         name,
-        lambda first: click_behavior.best_template_match(
-            [Path(first[2])], search_region=search_region,
-        ),
     )
     if confirmed is None:
         logger.debug('比较了%s个模板，%s未通过独立阈值与0.6秒三次稳定性确认',
@@ -146,10 +155,15 @@ def click_item_with_result(self, picture, name, search_region=None):
         return 1
     detected, click_point = confirmed
     _avg, score, path = detected
-    threshold = template_confidence.threshold_for(path)
+    threshold = template_confidence.threshold_for(path, selection)
     logger.debug('点击%s的最高匹配模板%s，匹配率 %.4f，独立阈值 %.4f',
                  name, path, score, threshold)
     result = click_behavior.click_auto(click_point, can_click)
+    if result == 2:
+        _emit_template_click(
+            self,
+            f'已点击模板 {name}（{path}），置信度 {score:.4f}，阈值 {threshold:.4f}',
+        )
     if result == 2 and _wait(self, 0.5):
         return 1
     return result
@@ -160,12 +174,13 @@ def click_item_with_result(self, picture, name, search_region=None):
 def find_item_with_result(self, picture, name):
     files = _template_files(picture)
     can_find = getattr(self, '_running', None)
+    selection = _template_selection(self)
     if can_find is not None and not can_find():
         return 1
     if not files or not _wait_for_user(can_find):
         return 1
     _avg, score, path = click_behavior.best_template_match(files)
-    threshold = template_confidence.threshold_for(path)
+    threshold = template_confidence.threshold_for(path, selection)
     found = _avg is not None and threshold is not None and score > threshold
     logger.debug('寻找%s的最高匹配模板%s，匹配率 %.4f，独立阈值 %s，结果%s',
                  name, path, score,
@@ -179,6 +194,7 @@ def find_item_with_result(self, picture, name):
 def click_competing_item_with_result(self, selected, pictures, name):
     groups = {key: _template_files(picture) for key, picture in pictures.items()}
     can_click = getattr(self, '_running', None)
+    selection = _template_selection(self)
     if can_click is not None and not can_click():
         return 1
     if any(not files for files in groups.values()) or not _wait_for_user(can_click):
@@ -186,7 +202,7 @@ def click_competing_item_with_result(self, selected, pictures, name):
     confirmed = _confirm_stable_detection(
         self,
         lambda: click_behavior.best_competing_template_match(selected, groups),
-        lambda detected: _competing_match_accepted(detected, selected),
+        lambda detected: _competing_match_accepted(detected, selected, selection),
         lambda detected: detected[2],
         name,
     )
@@ -197,11 +213,17 @@ def click_competing_item_with_result(self, selected, pictures, name):
         return 1
     detected, click_point = confirmed
     label, text_label, _avg, score, text_score, path, text_path = detected
-    full_threshold = template_confidence.threshold_for(path)
-    text_threshold = template_confidence.threshold_for(text_path)
+    full_threshold = template_confidence.threshold_for(path, selection)
+    text_threshold = template_confidence.threshold_for(text_path, selection)
     logger.debug('竞争识别点击%s：整图%s %.4f/%.4f，文字%s %.4f/%.4f',
                  name, path, score, full_threshold, text_path, text_score, text_threshold)
     result = click_behavior.click_auto(click_point, can_click)
+    if result == 2:
+        _emit_template_click(
+            self,
+            f'已点击模板 {name}（整图 {path}），置信度 {score:.4f}，阈值 {full_threshold:.4f}；'
+            f'等级文字 {text_path}，置信度 {text_score:.4f}，阈值 {text_threshold:.4f}',
+        )
     if result == 2 and _wait(self, 0.5):
         return 1
     return result
@@ -210,6 +232,7 @@ def click_competing_item_with_result(self, selected, pictures, name):
 def find_competing_item_with_result(self, selected, pictures, name):
     groups = {key: _template_files(picture) for key, picture in pictures.items()}
     can_find = getattr(self, '_running', None)
+    selection = _template_selection(self)
     if can_find is not None and not can_find():
         return 1
     if any(not files for files in groups.values()) or not _wait_for_user(can_find):
@@ -217,9 +240,9 @@ def find_competing_item_with_result(self, selected, pictures, name):
     label, text_label, _avg, score, text_score, path, text_path = \
         click_behavior.best_competing_template_match(selected, groups)
     detected = (label, text_label, _avg, score, text_score, path, text_path)
-    found = _competing_match_accepted(detected, selected)
-    full_threshold = template_confidence.threshold_for(path)
-    text_threshold = template_confidence.threshold_for(text_path)
+    found = _competing_match_accepted(detected, selected, selection)
+    full_threshold = template_confidence.threshold_for(path, selection)
+    text_threshold = template_confidence.threshold_for(text_path, selection)
     logger.debug('竞争寻找%s：整图=%s/%s %.4f/%s，文字=%s/%s %.4f/%s，结果%s',
                  name, label, path, score,
                  f'{full_threshold:.4f}' if full_threshold is not None else '不可用',

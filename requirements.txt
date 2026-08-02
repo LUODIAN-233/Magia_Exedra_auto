@@ -11,5 +11,5 @@ pywinctl           # 游戏窗口查找/聚焦/客户区读取
 Pillow             # PNG 模板完整性校验（也是 PyAutoGUI 的运行依赖）
 
 #-----------构建依赖-----------
-#仅打包发布时需要，源码运行不需要；如需打包请取消下面这行注释
-#pyinstaller       # pyinstaller -D -i resource/main.ico main.py
+# 发行构建使用 requirements-build.txt，其中固定了已验证的 PyInstaller 版本。
+# 构建命令：pyinstaller -D --windowed -i resource/main.ico -n Magia_Exedra_auto main.py

@@ -15,10 +15,10 @@ Runtime dependencies are declared in `requirements.txt`:
 pip install -r requirements.txt
 ```
 
-Building a release additionally requires `pyinstaller` (listed but commented out in `requirements.txt`; uncomment it or install separately):
+Release builds use `requirements-build.txt`, which installs the runtime dependencies and pins the verified PyInstaller 6.21.0 build tool:
 
 ```bash
-pip install pyinstaller
+pip install -r requirements-build.txt
 ```
 
 Asset scaling uses the committed `tools/ImageMagick/magick.exe` and needs no separate install; `magick` on PATH also works.
@@ -56,8 +56,9 @@ pyinstaller -D --windowed -i resource/main.ico -n Magia_Exedra_auto main.py
 
 ## Verification checks
 
-There is no formal test suite, lint, or CI configuration. After changes, run every applicable non-game check manually:
+Standard-library regression tests live under `tests/`; there is currently no lint or CI configuration. After changes, run every applicable non-game check:
 
+- `python -B -m unittest discover -s tests -v`
 - Python compile and import checks
 - Worker registry and template validation
 - Update ZIP and extraction checks
