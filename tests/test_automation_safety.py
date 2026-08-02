@@ -10,6 +10,7 @@ from unittest.mock import patch
 from src.core import input_activity
 from src.core.automation_position import capture_client_position, resolve_client_position
 from src.core.input_activity import UserActivityGuard
+from src.core.log_fold import ConsecutiveLogFolder
 from src.packs import language_switcher
 
 
@@ -42,20 +43,55 @@ class UserActivityTests(unittest.TestCase):
         )
         with patch.object(input_activity.ctypes, 'windll',
                           types.SimpleNamespace(user32=user32)):
-            self.assertTrue(UserActivityGuard._mouse_active())
+            self.assertEqual(UserActivityGuard._mouse_active(), '鼠标右键')
+
+    def test_recent_key_bit_does_not_trigger_activity(self):
+        user32 = types.SimpleNamespace(GetAsyncKeyState=lambda _key: 0x0001)
+        with patch.object(input_activity.ctypes, 'windll',
+                          types.SimpleNamespace(user32=user32)):
+            self.assertIsNone(UserActivityGuard._keyboard_active())
+            self.assertIsNone(UserActivityGuard._mouse_active())
+
+    def test_keyboard_activity_reports_key_name_and_code(self):
+        user32 = types.SimpleNamespace(
+            GetAsyncKeyState=lambda key: 0x8000 if key == ord('A') else 0,
+        )
+        with patch.object(input_activity.ctypes, 'windll',
+                          types.SimpleNamespace(user32=user32)):
+            self.assertEqual(
+                UserActivityGuard._keyboard_active(),
+                '键盘按键 A（VK 0x41）',
+            )
 
     def test_mouse_path_is_accumulated(self):
         guard = UserActivityGuard(mouse_threshold=10)
         guard._last_position = (0, 0)
         self.assertFalse(guard._observe_mouse_movement((4, 0)))
         self.assertFalse(guard._observe_mouse_movement((8, 0)))
-        self.assertTrue(guard._observe_mouse_movement((12, 0)))
+        self.assertIn('累计移动 12px', guard._observe_mouse_movement((12, 0)))
 
     def test_automation_movement_is_ignored(self):
         guard = UserActivityGuard(mouse_threshold=1)
         guard._last_position = (0, 0)
         guard._automation_depth = 1
         self.assertFalse(guard._observe_mouse_movement((100, 100)))
+
+
+class LogFoldingTests(unittest.TestCase):
+    def test_only_consecutive_identical_lines_are_folded(self):
+        folder = ConsecutiveLogFolder()
+        replace, first = folder.render('10:00:00', 'INFO', '运行', '等待战斗结束')
+        self.assertFalse(replace)
+        self.assertNotIn('连续重复', first)
+
+        replace, second = folder.render('10:00:01', 'INFO', '运行', '等待战斗结束')
+        self.assertTrue(replace)
+        self.assertIn('连续重复 2 次', second)
+
+        replace, _third = folder.render('10:00:02', 'INFO', '运行', '发现 retry')
+        self.assertFalse(replace)
+        replace, _fourth = folder.render('10:00:03', 'INFO', '运行', '等待战斗结束')
+        self.assertFalse(replace)
 
 
 class ClickConfirmationTests(unittest.TestCase):
@@ -109,6 +145,9 @@ class ClickConfirmationTests(unittest.TestCase):
         class Worker:
             expected_pack = ('EN', '2560x1440')
 
+            def __init__(self):
+                self.logs = []
+
             def _running(self):
                 return True
 
@@ -121,16 +160,24 @@ class ClickConfirmationTests(unittest.TestCase):
             def _automation_input(self):
                 return contextlib.nullcontext()
 
+            def _emit_log(self, message, level):
+                self.logs.append((message, level))
+
+        worker = Worker()
         with tempfile.TemporaryDirectory() as temp_dir:
             picture = Path(temp_dir) / 'item'
             Path(f'{picture}_1.png').write_bytes(b'1')
             Path(f'{picture}_2.png').write_bytes(b'2')
-            self.assertEqual(module.click_item_with_result(Worker(), str(picture), 'item'), 2)
+            self.assertEqual(module.click_item_with_result(worker, str(picture), 'item'), 2)
 
         self.assertEqual(len(paths_seen), 3)
         self.assertTrue(all(len(paths) == 2 for paths in paths_seen))
         self.assertTrue(selections_seen)
         self.assertTrue(all(selection == ('EN', '2560x1440') for selection in selections_seen))
+        self.assertEqual(len(worker.logs), 1)
+        self.assertIn('已点击模板 item', worker.logs[0][0])
+        self.assertIn('置信度 0.9500，阈值 0.8000', worker.logs[0][0])
+        self.assertEqual(worker.logs[0][1], 'INFO')
 
 
 class CrystalisFlowTests(unittest.TestCase):

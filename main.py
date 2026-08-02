@@ -43,13 +43,14 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QRadioBu
                                QMessageBox, QProgressDialog, QCheckBox, QGroupBox,
                                QDialog, QDialogButtonBox, QFormLayout, QSpinBox)
 from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QIcon, QIntValidator
+from PySide6.QtGui import QIcon, QIntValidator, QTextCursor
 
 #其他自己写的文件
 from src.packs import language_switcher, image_scaler
 from src.core.app_settings import (GUI_LOG_LEVELS, load_automation_mode, load_log_level,
                                    load_log_retention_days, save_automation_mode,
                                    save_log_level, save_log_retention_days)
+from src.core.log_fold import ConsecutiveLogFolder
 
 logger = logging.getLogger(__name__)
 runtime_logger = logging.getLogger('magia.runtime')
@@ -377,6 +378,7 @@ class mywindow(QWidget):
         self._initial_layout_sized = False
         self._startup_template_refresh_pending = False
         self._log_scroll_pending = False
+        self._gui_log_folder = ConsecutiveLogFolder()
 
         #启动时确保 aim 联接可用（aim 被移走时按 config 或第一个可用 pack 自动恢复）
         language_switcher.ensure_active()
@@ -863,9 +865,16 @@ class mywindow(QWidget):
         #异常堆栈和其它多行消息也逐行带上完整前缀，便于筛选和复制排查。
         lines = str(text).splitlines() or ['']
         for line in lines:
-            self.textedit_1.appendPlainText(
-                f'[{timestamp}] [{level}] [{source}] {line}'
+            replace, rendered = self._gui_log_folder.render(
+                timestamp, level, source, line,
             )
+            if replace:
+                block = self.textedit_1.document().lastBlock()
+                cursor = QTextCursor(block)
+                cursor.select(QTextCursor.BlockUnderCursor)
+                cursor.insertText(rendered)
+            else:
+                self.textedit_1.appendPlainText(rendered)
         scrollbar = self.textedit_1.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
         if not self._log_scroll_pending:

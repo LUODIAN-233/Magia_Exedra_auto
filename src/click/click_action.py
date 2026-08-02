@@ -37,6 +37,14 @@ def _record_automation_position(callback, position):
     click_behavior._record_automation_position(callback, position)
 
 
+def _emit_template_click(self, message):
+    emit = getattr(self, '_emit_log', None)
+    if emit is not None:
+        emit(message, 'INFO')
+    else:
+        logger.info(message)
+
+
 def _template_selection(self):
     selection = getattr(self, 'expected_pack', None)
     return selection if selection is not None else language_switcher.current_selection()
@@ -151,6 +159,11 @@ def click_item_with_result(self, picture, name, search_region=None):
     logger.debug('点击%s的最高匹配模板%s，匹配率 %.4f，独立阈值 %.4f',
                  name, path, score, threshold)
     result = click_behavior.click_auto(click_point, can_click)
+    if result == 2:
+        _emit_template_click(
+            self,
+            f'已点击模板 {name}（{path}），置信度 {score:.4f}，阈值 {threshold:.4f}',
+        )
     if result == 2 and _wait(self, 0.5):
         return 1
     return result
@@ -205,6 +218,12 @@ def click_competing_item_with_result(self, selected, pictures, name):
     logger.debug('竞争识别点击%s：整图%s %.4f/%.4f，文字%s %.4f/%.4f',
                  name, path, score, full_threshold, text_path, text_score, text_threshold)
     result = click_behavior.click_auto(click_point, can_click)
+    if result == 2:
+        _emit_template_click(
+            self,
+            f'已点击模板 {name}（整图 {path}），置信度 {score:.4f}，阈值 {full_threshold:.4f}；'
+            f'等级文字 {text_path}，置信度 {text_score:.4f}，阈值 {text_threshold:.4f}',
+        )
     if result == 2 and _wait(self, 0.5):
         return 1
     return result
