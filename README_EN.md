@@ -6,7 +6,7 @@
     <img alt="Platform" src="https://img.shields.io/badge/Platform-Windows-0078D4">
     <img alt="Architecture" src="https://img.shields.io/badge/Architecture-x86--64-555555">
     <img alt="GUI" src="https://img.shields.io/badge/GUI-PySide6-41CD52">
-    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release" src="https://img.shields.io/github/v/release/LUODIAN-233/Magia_Exedra_auto?include_prereleases&label=release"></a>
+    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release" src="https://img.shields.io/github/v/release/LUODIAN-233/Magia_Exedra_auto?include_prereleases&label=release&cacheSeconds=300"></a>
   </p>
   <p>
     <a href="./README.md">简体中文</a> · <a href="./README_EN.md">English</a> · <a href="./README_JP.md">日本語</a>

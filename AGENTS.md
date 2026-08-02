@@ -89,8 +89,8 @@ Two selectable mode flows have required starting screens. Their code is independ
 
 - Before every user-requested push, ask one short confirmation unless already answered: is this only a commit/push with no release, or a Release? For a Release, also confirm exact version, stable/beta channel, and target branch. A no-release push does not require a stable/beta choice.
 - A no-release push must not create a tag, artifact, or GitHub Release.
-- Release versions use explicit three-part SemVer. `VERSION` has no `v`; the tag is exactly `v{VERSION}`. Stable has no prerelease suffix and `prerelease=false`; beta uses the confirmed suffix and `prerelease=true`. VERSION, tag, Release `tag_name`, and asset tag fragment must agree.
-- Fetch remote branches/tags first and check for an existing same-name tag, Release, or asset. Never move a published tag.
+- Release versions use explicit three-part SemVer. `VERSION` has no `v`; the Git tag and Release `tag_name` are exactly `v{VERSION}`, while the GitHub Release display name/title is exactly `{VERSION}` without `v`. Stable has no prerelease suffix and `prerelease=false`; beta uses the confirmed suffix and `prerelease=true`. VERSION, tag/`tag_name`, Release display name, and asset tag fragment must agree after applying their required prefixes.
+- Fetch remote branches/tags first and check for an existing same-name tag, Release display name, or asset. Never move a published tag.
 - Choose and record an ancestor release baseline. Stable normally uses the previous stable ancestor; beta uses the previous beta ancestor, or nearest stable ancestor if no prior beta exists. Review every commit and the full diff from baseline to release commit.
 - Update `src/update/update_check.py::VERSION` and version-specific docs, then run all applicable non-game checks.
 - Build into fresh output/staging with `pyinstaller -D --windowed -i resource/main.ico -n Magia_Exedra_auto main.py`; do not reuse old untracked `main.spec` or `dist/` accidentally.
@@ -100,7 +100,7 @@ Two selectable mode flows have required starting screens. Their code is independ
   - Beta: `MagiaExedra_auto_v<version-with-prerelease>_win64.zip`
 - Verify ZIP CRC/entries, tracked pack placeholders, no runtime/generated files, and AMD64 PE. Run current `extract_update()` against the final ZIP and confirm its root/manifest. Confirm `find_asset()` uniquely identifies expected metadata.
 - Smoke-start `Magia_Exedra_auto.exe` from a disposable copy of the final staging tree. Confirm it does not immediately exit and can create the Qt app/load workers. Remove smoke-created `aim/` and `active.json` before final ZIP. If smoke start cannot run, state why in Release notes.
-- Push the intended branch first. Create a **draft Release**, upload the one final ZIP, wait for `state=uploaded` and GitHub digest, then compare asset name, byte size, and SHA-256 with local values. Prefer re-downloading and rechecking before publication.
+- Push the intended branch first. Create a **draft Release** whose `tag_name` is `v{VERSION}` and whose display name/title is `{VERSION}` without `v`, upload the one final ZIP, wait for `state=uploaded` and GitHub digest, then compare asset name, byte size, and SHA-256 with local values. Prefer re-downloading and rechecking before publication.
 - Publish only after all checks pass. The tag/Release must point to the exact pushed commit. Beta must be prerelease and never latest. On failure keep it draft or remove the bad asset/Release; never silently replace content under a published tag.
 - Every Release description uses these sections in order:
 
