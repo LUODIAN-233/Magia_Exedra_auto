@@ -165,6 +165,35 @@ def _match_one(match_screen, template):
     return min_loc, (width, height), score
 
 
+def _match_candidates(match_screen, template, limit=8):
+    height, width = template.shape[:2]
+    if height > match_screen.shape[0] or width > match_screen.shape[1]:
+        return []
+    match_template = cv2.GaussianBlur(template, (3, 3), 0)
+    try:
+        result = cv2.matchTemplate(match_screen, match_template, cv2.TM_SQDIFF_NORMED)
+    except cv2.error as e:
+        logger.warning('模板匹配失败: %s', e)
+        return []
+
+    candidates = []
+    suppress_x = max(8, width // 2)
+    suppress_y = max(8, height // 2)
+    for _ in range(limit):
+        min_val, _max_val, min_loc, _max_loc = cv2.minMaxLoc(result)
+        if min_val >= 1.0:
+            break
+        score = 1 - math.sqrt(max(0.0, min(1.0, min_val)))
+        candidates.append((min_loc, (width, height), score))
+        x, y = min_loc
+        left = max(0, x - suppress_x)
+        top = max(0, y - suppress_y)
+        right = min(result.shape[1], x + suppress_x + 1)
+        bottom = min(result.shape[0], y + suppress_y + 1)
+        result[top:bottom, left:right] = 1.0
+    return candidates
+
+
 def best_template_match(template_paths, search_region=None):
     """在同一帧中比较整组模板，返回全局最高分的 (坐标, 分数, 路径)。"""
     screen, origin = _capture_game_window()
@@ -274,6 +303,128 @@ def best_competing_template_match(selected, template_groups, radius=3):
     logger.debug('所选候选位置整图最高: %s/%s %.4f；文字区域最高: %s/%s %.4f',
                  label, path, score, text_label, text_path, text_score)
     return label, text_label, avg, score, text_score, path, text_path
+
+
+def _competing_match_at_location(match_screen, origin, selected, template_groups,
+                                 selected_location, selected_size, selected_score,
+                                 selected_path, radius):
+    best = selected_score, selected, selected_location, selected_size, selected_path
+    text_best = None
+    for label, template_paths in template_groups.items():
+        for path in template_paths:
+            template = cv2.imread(str(path))
+            if template is None:
+                logger.warning('模板图片读取失败: %s', path)
+                continue
+            height, width = template.shape[:2]
+            if height > match_screen.shape[0] or width > match_screen.shape[1]:
+                continue
+            match_template = cv2.GaussianBlur(template, (3, 3), 0)
+            result = cv2.matchTemplate(match_screen, match_template, cv2.TM_SQDIFF_NORMED)
+            x, y = selected_location
+            left = max(0, x - radius)
+            top = max(0, y - radius)
+            right = min(result.shape[1], x + radius + 1)
+            bottom = min(result.shape[0], y + radius + 1)
+            local = result[top:bottom, left:right]
+            if local.size == 0:
+                continue
+            min_val, _max_val, min_loc, _max_loc = cv2.minMaxLoc(local)
+            score = 1 - math.sqrt(max(0.0, min(1.0, min_val)))
+            location = (left + min_loc[0], top + min_loc[1])
+            if score > best[0]:
+                best = score, label, location, (width, height), str(path)
+
+            margin_x = round(width * 0.55)
+            right_margin = 5
+            margin_y = max(3, round(height * 0.12))
+            text_template = match_template[margin_y:height - margin_y,
+                                           margin_x:width - right_margin]
+            text_screen = match_screen[location[1] + margin_y:location[1] + height - margin_y,
+                                       location[0] + margin_x:location[0] + width - right_margin]
+            if text_template.size == 0 or text_screen.shape != text_template.shape:
+                continue
+            text_value = float(cv2.matchTemplate(
+                text_screen, text_template, cv2.TM_SQDIFF_NORMED
+            )[0, 0])
+            text_score = 1 - math.sqrt(max(0.0, min(1.0, text_value)))
+            if text_best is None or text_score > text_best[0]:
+                text_best = text_score, label, str(path)
+    score, label, location, size, path = best
+    if text_best is None:
+        return label, None, None, score, 0.0, path, None
+    text_score, text_label, text_path = text_best
+    avg = (origin[0] + selected_location[0] + selected_size[0] // 2,
+           origin[1] + selected_location[1] + selected_size[1] // 2)
+    return label, text_label, avg, score, text_score, path, text_path
+
+
+def best_competing_template_matches(selected, template_groups, radius=3, search_region=None,
+                                    max_candidates=8):
+    """返回多个等级候选点，供上层跳过满员救援条目。"""
+    screen, origin = _capture_game_window()
+    if screen is None:
+        return []
+    screen, origin = _crop_search_region(screen, origin, search_region)
+    if screen is None:
+        return []
+    match_screen = cv2.GaussianBlur(screen, (3, 3), 0)
+    selected_candidates = []
+    for path in template_groups.get(selected, ()):
+        template = cv2.imread(str(path))
+        if template is None:
+            logger.warning('模板图片读取失败: %s', path)
+            continue
+        for location, size, score in _match_candidates(match_screen, template, max_candidates):
+            center = (origin[0] + location[0] + size[0] // 2,
+                      origin[1] + location[1] + size[1] // 2)
+            if any(max(abs(center[0] - old[0]), abs(center[1] - old[1])) <= max(size)
+                   for old, *_rest in selected_candidates):
+                continue
+            selected_candidates.append((center, score, location, size, str(path)))
+    selected_candidates.sort(key=lambda item: item[1], reverse=True)
+
+    matches = []
+    for _center, score, location, size, path in selected_candidates[:max_candidates]:
+        matches.append(_competing_match_at_location(
+            match_screen, origin, selected, template_groups,
+            location, size, score, path, radius,
+        ))
+    return matches
+
+
+def participant_count_full_near(point):
+    """根据等级模板点附近的参加人数数字宽度，识别 10/10 满员条目。"""
+    if point is None:
+        return False
+    screen, origin = _capture_game_window()
+    if screen is None:
+        return False
+    client = get_client_region('MadokaExedra')
+    if client is None:
+        return False
+    _left, _top, width, height = client
+    x = round(point[0] - origin[0])
+    y = round(point[1] - origin[1])
+    left = max(0, x - round(width * 0.005))
+    right = min(screen.shape[1], x + round(width * 0.065))
+    top = max(0, y + round(height * 0.080))
+    bottom = min(screen.shape[0], y + round(height * 0.120))
+    if right <= left or bottom <= top:
+        return False
+    crop = screen[top:bottom, left:right]
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    mask = gray > 145
+    _ys, xs = np.where(mask)
+    if xs.size == 0:
+        logger.debug('参加人数区域未检测到数字亮像素: %s', point)
+        return False
+    digit_width = int(xs.max() - xs.min() + 1)
+    full_width = round(width * 0.044)
+    is_full = digit_width >= full_width
+    logger.debug('参加人数宽度 %spx，满员阈值 %spx，结果 %s',
+                 digit_width, full_width, is_full)
+    return is_full
 
 
 def click_auto(var_avg, can_click=None):

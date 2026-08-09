@@ -2,6 +2,9 @@
 __pycache__/
 *.pyc
 
+# Local regression tests
+tests/
+
 #aim 是运行时由 language_switcher.ensure_active() 创建的 Windows 目录联接，
 #指向 language/<语言>/<语言>_<分辨率>/ 里的某个真实 pack，不应入库
 aim/
