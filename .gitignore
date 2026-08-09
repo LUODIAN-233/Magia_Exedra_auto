@@ -1,0 +1,29 @@
+#Python 字节码缓存，不入库
+__pycache__/
+*.pyc
+
+#aim 是运行时由 language_switcher.ensure_active() 创建的 Windows 目录联接，
+#指向 language/<语言>/<语言>_<分辨率>/ 里的某个真实 pack，不应入库
+aim/
+
+#运行时记录当前语言/分辨率选择，每次切换都会改写，不入库
+language/active.json
+
+#GUI 偏好设置（如日志等级），每台机器独立保存
+settings.json
+
+#运行时滚动日志，由 src/core/log_setup.py 写入，不入库
+logs/
+
+#缩放器生成的模板和校验清单；保留各目录中已入库的 .gitkeep
+language/*/*_1280x720/**/*.png
+language/*/*_1920x1080/**/*.png
+language/*/*_3840x2160/**/*.png
+language/**/.source_hashes.json
+
+#PyInstaller 本地构建产物
+.release-venv-*/
+build/
+dist/
+*.spec
+
