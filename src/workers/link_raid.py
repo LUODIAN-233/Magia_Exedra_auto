@@ -17,6 +17,8 @@ from .registry import register, ParamSpec
 
 logger = logging.getLogger(__name__)
 
+LEVEL_LIST_SEARCH_REGION = (0.20, 0.18, 0.70, 0.78)
+
 
 @register(
     'link_raid',
@@ -349,14 +351,18 @@ class LinkRaidWorker(BaseWorker):
             for level in (4, 6, 7, 8, 9, 10, 11, 12)
         }
         found = click_action.find_competing_item_with_result(
-            self, self.level_choice, level_pictures, f'lv{self.level_choice}'
+            self, self.level_choice, level_pictures, f'lv{self.level_choice}',
+            search_region=LEVEL_LIST_SEARCH_REGION,
+            skip_full=True,
         )
         if found == 2:
             self.signal.emit(str(f'lv{self.level_choice}找到了，下一步是选择'))
             if not self._running():
                 return 1
             result = click_action.click_competing_item_with_result(
-                self, self.level_choice, level_pictures, f'lv{self.level_choice}'
+                self, self.level_choice, level_pictures, f'lv{self.level_choice}',
+                search_region=LEVEL_LIST_SEARCH_REGION,
+                skip_full=True,
             )
             if result == 2:
                 self.signal.emit(str(f'lv{self.level_choice}点击完成'))

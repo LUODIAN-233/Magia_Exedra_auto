@@ -191,7 +191,23 @@ def find_item_with_result(self, picture, name):
     return 2 if found else 1
 
 
-def click_competing_item_with_result(self, selected, pictures, name):
+def _best_accepted_competing_detection(selected, groups, selection, search_region=None,
+                                       skip_full=False, name=''):
+    matches = click_behavior.best_competing_template_matches(
+        selected, groups, search_region=search_region,
+    )
+    for detected in matches:
+        if not _competing_match_accepted(detected, selected, selection):
+            continue
+        if skip_full and click_behavior.participant_count_full_near(detected[2]):
+            logger.info('%s候选条目参加人数已满，跳过: %s', name, detected[2])
+            continue
+        return detected
+    return None, None, None, 0.0, 0.0, None, None
+
+
+def click_competing_item_with_result(self, selected, pictures, name, search_region=None,
+                                    skip_full=False):
     groups = {key: _template_files(picture) for key, picture in pictures.items()}
     can_click = getattr(self, '_running', None)
     selection = _template_selection(self)
@@ -201,7 +217,9 @@ def click_competing_item_with_result(self, selected, pictures, name):
         return 1
     confirmed = _confirm_stable_detection(
         self,
-        lambda: click_behavior.best_competing_template_match(selected, groups),
+        lambda: _best_accepted_competing_detection(
+            selected, groups, selection, search_region, skip_full, name,
+        ),
         lambda detected: _competing_match_accepted(detected, selected, selection),
         lambda detected: detected[2],
         name,
@@ -229,7 +247,8 @@ def click_competing_item_with_result(self, selected, pictures, name):
     return result
 
 
-def find_competing_item_with_result(self, selected, pictures, name):
+def find_competing_item_with_result(self, selected, pictures, name, search_region=None,
+                                   skip_full=False):
     groups = {key: _template_files(picture) for key, picture in pictures.items()}
     can_find = getattr(self, '_running', None)
     selection = _template_selection(self)
@@ -238,7 +257,9 @@ def find_competing_item_with_result(self, selected, pictures, name):
     if any(not files for files in groups.values()) or not _wait_for_user(can_find):
         return 1
     label, text_label, _avg, score, text_score, path, text_path = \
-        click_behavior.best_competing_template_match(selected, groups)
+        _best_accepted_competing_detection(
+            selected, groups, selection, search_region, skip_full, name,
+        )
     detected = (label, text_label, _avg, score, text_score, path, text_path)
     found = _competing_match_accepted(detected, selected, selection)
     full_threshold = template_confidence.threshold_for(path, selection)
