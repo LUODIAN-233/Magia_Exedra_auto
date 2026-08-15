@@ -208,7 +208,7 @@ class LinkRaidWorker(BaseWorker):
         wait_deadline = time.monotonic() + BATTLE_TIMEOUT
         while self._running() and self.win_exist == 1 and time.monotonic() < wait_deadline:
             self.signal.emit(str(f'进入joined battle，开始清空已经结束的战斗。需要保证第一次能够清除后才会回到寻找战斗界面'))
-            for _ in range(3):
+            for _ in range(6):
                 if not self._running():
                     return
                 click_action.move_a_to_b_scaled(1400, 1200, 1400, 400, self._running)
