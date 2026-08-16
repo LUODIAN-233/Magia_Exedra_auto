@@ -15,6 +15,8 @@ CLICK_CONFIRM_SAMPLES = 3
 CLICK_CONFIRM_INTERVAL = 0.3
 CLICK_STABILITY_RATIO = 0.008
 CLICK_STABILITY_MIN_RADIUS = 6
+POST_CLICK_DELAY = 0.2
+DRAG_DURATION = 0.5
 
 
 def _worker_from_callback(callback):
@@ -87,6 +89,14 @@ def _template_files(picture):
         index += 1
 
 
+def _template_files_for_variants(picture, variants=None):
+    files = _template_files(picture)
+    if variants is None:
+        return files
+    selected = set(variants)
+    return [path for index, path in enumerate(files, 1) if index in selected]
+
+
 def _click_stability_radius():
     size = click_behavior.get_client_size('MadokaExedra')
     if size is None:
@@ -131,6 +141,29 @@ def _confirm_stable_detection(self, detect_once, accepted, position, name):
     return samples[-1][0], click_point
 
 
+def _confirm_stable_presence(self, detect_once, accepted, name):
+    """连续三次确认页面特征存在；允许检测模板和位置在组内切换。"""
+    can_continue = getattr(self, '_running', None)
+    samples = []
+    for index in range(CLICK_CONFIRM_SAMPLES):
+        if can_continue is not None and not can_continue():
+            return None
+        if not _wait_for_user(can_continue):
+            return None
+        detected = detect_once()
+        if not accepted(detected):
+            logger.debug('%s页面确认失败：第%d/%d次采样未命中',
+                         name, index + 1, CLICK_CONFIRM_SAMPLES)
+            return None
+        samples.append(detected)
+        if index + 1 < CLICK_CONFIRM_SAMPLES and _wait(self, CLICK_CONFIRM_INTERVAL):
+            return None
+    logger.debug('%s在%.1f秒内连续%d次采样命中页面特征',
+                 name, CLICK_CONFIRM_INTERVAL * (CLICK_CONFIRM_SAMPLES - 1),
+                 CLICK_CONFIRM_SAMPLES)
+    return samples[-1]
+
+
 #尝试点击一次，查询组内所有图片，返回点击结果return
 def click_item_with_result(self, picture, name, search_region=None):
     files = _template_files(picture)
@@ -150,8 +183,6 @@ def click_item_with_result(self, picture, name, search_region=None):
     if confirmed is None:
         logger.debug('比较了%s个模板，%s未通过独立阈值与0.6秒三次稳定性确认',
                      len(files), name)
-        if _wait(self, 0.4):
-            return 1
         return 1
     detected, click_point = confirmed
     _avg, score, path = detected
@@ -164,8 +195,46 @@ def click_item_with_result(self, picture, name, search_region=None):
             self,
             f'已点击模板 {name}（{path}），置信度 {score:.4f}，阈值 {threshold:.4f}',
         )
-    if result == 2 and _wait(self, 0.5):
+        if _wait(self, POST_CLICK_DELAY):
+            return 1
+    return result
+
+
+def click_fixed_position_for_item_with_result(self, picture, name, x_2k, y_2k,
+                                              search_region=None,
+                                              foreground_variants=None):
+    """稳定识别页面后点击固定的 2K 基准坐标，不使用检测模板的位置。"""
+    files = _template_files_for_variants(picture, foreground_variants)
+    can_click = getattr(self, '_running', None)
+    selection = _template_selection(self)
+    if can_click is not None and not can_click():
         return 1
+    if not files or not _wait_for_user(can_click):
+        return 1
+    detected = _confirm_stable_presence(
+        self,
+        lambda: click_behavior.best_template_match(
+            files, search_region=search_region,
+            foreground=foreground_variants is not None,
+        ),
+        lambda detected: _template_match_accepted(detected, selection),
+        name,
+    )
+    if detected is None:
+        logger.debug('比较了%s个模板，%s未通过0.6秒三次页面确认',
+                     len(files), name)
+        return 1
+    _avg, score, path = detected
+    threshold = template_confidence.threshold_for(path, selection)
+    result = click_position_scaled(x_2k, y_2k, can_click)
+    if result == 2:
+        _emit_template_click(
+            self,
+            f'已识别页面 {name}（检测模板 {path}），置信度 {score:.4f}，'
+            f'阈值 {threshold:.4f}；已点击安全位置 ({x_2k}, {y_2k})',
+        )
+        if _wait(self, POST_CLICK_DELAY):
+            return 1
     return result
 
 
@@ -186,28 +255,66 @@ def find_item_with_result(self, picture, name):
                  name, path, score,
                  f'{threshold:.4f}' if threshold is not None else '不可用',
                  2 if found else 1)
-    if _wait(self, 0.5 if found else 0.4):
-        return 1
     return 2 if found else 1
 
 
+def find_first_item_with_result(self, items):
+    """在同一帧内检查多组下一步模板，返回首个命中的 (picture, name)。"""
+    entries = tuple(items)
+    if not entries:
+        return None
+    can_find = getattr(self, '_running', None)
+    selection = _template_selection(self)
+    if can_find is not None and not can_find():
+        return None
+    normalized = []
+    groups = []
+    foreground_groups = []
+    for entry in entries:
+        picture, name = entry[:2]
+        options = entry[2] if len(entry) > 2 else {}
+        variants = options.get('foreground_variants')
+        normalized.append((picture, name))
+        groups.append(_template_files_for_variants(picture, variants))
+        foreground_groups.append(variants is not None)
+    if any(not files for files in groups) or not _wait_for_user(can_find):
+        return None
+    detections = click_behavior.best_template_matches(
+        groups, foreground_groups=foreground_groups,
+    )
+    for entry, detected in zip(normalized, detections):
+        point, score, path = detected
+        threshold = template_confidence.threshold_for(path, selection) if path else None
+        if point is not None and threshold is not None and score > threshold:
+            logger.debug('同帧下一步识别命中%s：%s %.4f/%.4f',
+                         entry[1], path, score, threshold)
+            return entry
+    return None
+
+
 def _best_accepted_competing_detection(selected, groups, selection, search_region=None,
-                                       skip_full=False, name=''):
+                                       skip_crowded=False, name=''):
     matches = click_behavior.best_competing_template_matches(
         selected, groups, search_region=search_region,
     )
     for detected in matches:
         if not _competing_match_accepted(detected, selected, selection):
             continue
-        if skip_full and click_behavior.participant_count_full_near(detected[2]):
-            logger.info('%s候选条目参加人数已满，跳过: %s', name, detected[2])
-            continue
+        if skip_crowded:
+            crowded_status = click_behavior.participant_count_crowded_near(detected[2])
+            if crowded_status is not False:
+                if crowded_status is True:
+                    logger.info('%s候选条目参加人数为 9/10 或 10/10，跳过: %s',
+                                name, detected[2])
+                else:
+                    logger.warning('%s候选条目参加人数无法确认，安全跳过: %s', name, detected[2])
+                continue
         return detected
     return None, None, None, 0.0, 0.0, None, None
 
 
 def click_competing_item_with_result(self, selected, pictures, name, search_region=None,
-                                    skip_full=False):
+                                    skip_crowded=False):
     groups = {key: _template_files(picture) for key, picture in pictures.items()}
     can_click = getattr(self, '_running', None)
     selection = _template_selection(self)
@@ -218,7 +325,7 @@ def click_competing_item_with_result(self, selected, pictures, name, search_regi
     confirmed = _confirm_stable_detection(
         self,
         lambda: _best_accepted_competing_detection(
-            selected, groups, selection, search_region, skip_full, name,
+            selected, groups, selection, search_region, skip_crowded, name,
         ),
         lambda detected: _competing_match_accepted(detected, selected, selection),
         lambda detected: detected[2],
@@ -226,8 +333,6 @@ def click_competing_item_with_result(self, selected, pictures, name, search_regi
     )
     if confirmed is None:
         logger.debug('竞争识别%s未通过0.6秒三次采样稳定性确认', name)
-        if _wait(self, 0.4):
-            return 1
         return 1
     detected, click_point = confirmed
     label, text_label, _avg, score, text_score, path, text_path = detected
@@ -242,13 +347,13 @@ def click_competing_item_with_result(self, selected, pictures, name, search_regi
             f'已点击模板 {name}（整图 {path}），置信度 {score:.4f}，阈值 {full_threshold:.4f}；'
             f'等级文字 {text_path}，置信度 {text_score:.4f}，阈值 {text_threshold:.4f}',
         )
-    if result == 2 and _wait(self, 0.5):
-        return 1
+        if _wait(self, POST_CLICK_DELAY):
+            return 1
     return result
 
 
 def find_competing_item_with_result(self, selected, pictures, name, search_region=None,
-                                   skip_full=False):
+                                   skip_crowded=False):
     groups = {key: _template_files(picture) for key, picture in pictures.items()}
     can_find = getattr(self, '_running', None)
     selection = _template_selection(self)
@@ -258,7 +363,7 @@ def find_competing_item_with_result(self, selected, pictures, name, search_regio
         return 1
     label, text_label, _avg, score, text_score, path, text_path = \
         _best_accepted_competing_detection(
-            selected, groups, selection, search_region, skip_full, name,
+            selected, groups, selection, search_region, skip_crowded, name,
         )
     detected = (label, text_label, _avg, score, text_score, path, text_path)
     found = _competing_match_accepted(detected, selected, selection)
@@ -270,21 +375,21 @@ def find_competing_item_with_result(self, selected, pictures, name, search_regio
                  text_label, text_path, text_score,
                  f'{text_threshold:.4f}' if text_threshold is not None else '不可用',
                  2 if found else 1)
-    if _wait(self, 0.5 if found else 0.4):
-        return 1
     return 2 if found else 1
 
-#用于点击特定位置，输入坐标，第一个为窗口左到右的偏移，第二个上到下，注意上到下会有一个窗体厚度，不同缩放倍率会不同！
+#用于点击客户区内的特定位置，输入坐标依次为从客户区左侧、顶部开始的偏移。
 def click_position(move_lelt, move_top, can_click=None):
     if not _wait_for_user(can_click):
         return 1
     # 把游戏窗口弄出来
-    window = click_behavior.find_win('MadokaExedra')
-    if window is None:
+    if click_behavior.find_win('MadokaExedra') is None:
         return 1
-    left, top, width, height = window
+    client = click_behavior.get_client_region('MadokaExedra')
+    if client is None:
+        return 1
+    left, top, width, height = client
     if not (0 <= move_lelt < width and 0 <= move_top < height):
-        logger.warning('点击坐标超出游戏窗口: (%s, %s)，窗口大小 %sx%s', move_lelt, move_top, width, height)
+        logger.warning('点击坐标超出游戏客户区: (%s, %s)，客户区大小 %sx%s', move_lelt, move_top, width, height)
         return 1
     try:
         time.sleep(0.1)
@@ -306,13 +411,15 @@ def click_position(move_lelt, move_top, can_click=None):
 def move_a_to_b(move_lelt_a, move_top_a, move_lelt_b, move_top_b, can_move=None):
     if not _wait_for_user(can_move):
         return 1
-    window = click_behavior.find_win('MadokaExedra')
-    if window is None:
+    if click_behavior.find_win('MadokaExedra') is None:
         return 1
-    left, top, width, height = window
+    client = click_behavior.get_client_region('MadokaExedra')
+    if client is None:
+        return 1
+    left, top, width, height = client
     points = ((move_lelt_a, move_top_a), (move_lelt_b, move_top_b))
     if any(not (0 <= x < width and 0 <= y < height) for x, y in points):
-        logger.warning('拖拽坐标超出游戏窗口: %s，窗口大小 %sx%s', points, width, height)
+        logger.warning('拖拽坐标超出游戏客户区: %s，客户区大小 %sx%s', points, width, height)
         return 1
     try:
         time.sleep(0.1)
@@ -323,7 +430,10 @@ def move_a_to_b(move_lelt_a, move_top_a, move_lelt_b, move_top_b, can_move=None)
             time.sleep(0.1)
             if can_move is not None and not can_move():
                 return 1
-            pyautogui.dragTo(left + move_lelt_b, top + move_top_b, duration=2, button='left')
+            pyautogui.dragTo(
+                left + move_lelt_b, top + move_top_b,
+                duration=DRAG_DURATION, button='left',
+            )
             _record_automation_position(can_move, (left + move_lelt_b, top + move_top_b))
         time.sleep(0.1)
     except Exception as e:

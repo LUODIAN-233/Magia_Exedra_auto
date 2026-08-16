@@ -18,6 +18,9 @@ from .registry import register, ParamSpec
 logger = logging.getLogger(__name__)
 
 LEVEL_LIST_SEARCH_REGION = (0.20, 0.18, 0.70, 0.78)
+SCROLL_SETTLE_DELAY = 1.0
+TAP_TO_CONTINUE_POSITION_2K = (1280, 1367)
+TAP_TO_CONTINUE_FOREGROUND_VARIANTS = (1, 2)
 
 
 @register(
@@ -56,6 +59,8 @@ LEVEL_LIST_SEARCH_REGION = (0.20, 0.18, 0.70, 0.78)
         'quests/link_raid/backup_requests/join/play',
         'quests/link_raid/backup_requests/join/ok',
         'quests/link_raid/backup_requests/join/full/already_end',
+        'quests/link_raid/backup_requests/join/full/battle_full',
+        'quests/link_raid/backup_requests/join/full/ok',
         'quests/link_raid/backup_requests/battle/tap_to_countinue',
         'quests/link_raid/backup_requests/battle/back',
         'quests/link_raid/backup_requests/lv/lv4/lv4',
@@ -102,9 +107,6 @@ class LinkRaidWorker(BaseWorker):
         self.win_exist = 1
         # 点击 play 之后战斗已经结束，1 代表没结束，2 代表战斗已经结束
         self.already_end = 1
-        # 清理打满状态，指的是清理里面还有没有 loss 或者 win 状态的标识，1 是清理干净了，2 还没清理干净
-        self.join_fill_clean = 1
-
         self.signal.emit(str('具体挂机参数为：'))
         self.signal.emit(str(f'选择的等级是：{self.level_choice}'))
         self.signal.emit(str(f'喝体力药的次数是：{self.LP_full_add - 1}'))
@@ -256,21 +258,24 @@ class LinkRaidWorker(BaseWorker):
                 next_steps=((
                     './aim/quests/link_raid/backup_requests/battle/tap_to_countinue',
                     'tap_to_countinue',
+                    {'foreground_variants': TAP_TO_CONTINUE_FOREGROUND_VARIANTS},
                 ),),
             )
             if result == 2:
                 self.signal.emit(str('ended点击完成'))
             result = 1
 
-            # 点击结算界面的 tap_to_countinue
+            # 检测模板只用于确认结算页，点击固定的底部中央安全位置。
             result = self._click_until(
                 './aim/quests/link_raid/backup_requests/battle/tap_to_countinue',
                 'tap_to_countinue',
                 BATTLE_TIMEOUT,
                 next_steps=(('./aim/quests/link_raid/backup_requests/battle/back', 'back'),),
+                fixed_click_2k=TAP_TO_CONTINUE_POSITION_2K,
+                foreground_variants=TAP_TO_CONTINUE_FOREGROUND_VARIANTS,
             )
             if result == 2:
-                self.signal.emit(str('tap_to_countinue点击完成'))
+                self.signal.emit(str('tap_to_countinue已识别，安全位置点击完成'))
                 self.like_battle_result()
             if not self._running():
                 return
@@ -353,7 +358,7 @@ class LinkRaidWorker(BaseWorker):
         found = click_action.find_competing_item_with_result(
             self, self.level_choice, level_pictures, f'lv{self.level_choice}',
             search_region=LEVEL_LIST_SEARCH_REGION,
-            skip_full=True,
+            skip_crowded=True,
         )
         if found == 2:
             self.signal.emit(str(f'lv{self.level_choice}找到了，下一步是选择'))
@@ -362,7 +367,7 @@ class LinkRaidWorker(BaseWorker):
             result = click_action.click_competing_item_with_result(
                 self, self.level_choice, level_pictures, f'lv{self.level_choice}',
                 search_region=LEVEL_LIST_SEARCH_REGION,
-                skip_full=True,
+                skip_crowded=True,
             )
             if result == 2:
                 self.signal.emit(str(f'lv{self.level_choice}点击完成'))
@@ -385,7 +390,7 @@ class LinkRaidWorker(BaseWorker):
             if not self._running():
                 return 1
             click_action.move_a_to_b_scaled(1400, 1200, 1400, 400, self._running)
-            if self._wait(4):
+            if self._wait(SCROLL_SETTLE_DELAY):
                 return 1
             self.signal.emit(str(f'下拉完成，继续查找 lv{self.level_choice}'))
             r = self._scan_lv()
@@ -397,11 +402,12 @@ class LinkRaidWorker(BaseWorker):
     def join_battle(self):
         result = 1
 
-        # 点击 join 进入到选人的界面（next_steps 含 already_end：点击 join 后战斗可能已结束）
+        # 点击 join 后可能进入编队，也可能遇到体力不足、战斗结束或房间满员。
         join_next_steps = (
             ('./aim/quests/link_raid/backup_requests/no_lp/no_lp', 'no_lp'),
             ('./aim/quests/link_raid/backup_requests/join/play', 'play'),
             ('./aim/quests/link_raid/backup_requests/join/full/already_end', 'already_end'),
+            ('./aim/quests/link_raid/backup_requests/join/full/battle_full', 'battle_full'),
         )
         result = self._click_until(
             './aim/quests/link_raid/backup_requests/join', 'join',
@@ -411,17 +417,31 @@ class LinkRaidWorker(BaseWorker):
             self.signal.emit(str('join点击完成'))
         result = 1
 
-        # 点击 join 后可能直接弹出 already_end（战斗已结束）：点 ok 后重新匹配并加入
+        # 已结束和满员都表示当前候选已失效：关闭弹窗后重新匹配，绝不加入其它等级。
         while self._running():
             if self._wait(0.2):
                 return
-            self.already_end = click_action.find_item_with_result(
-                self, './aim/quests/link_raid/backup_requests/join/full/already_end', 'already_end'
+            recovery = click_action.find_first_item_with_result(
+                self,
+                (
+                    ('./aim/quests/link_raid/backup_requests/join/full/already_end',
+                     'already_end'),
+                    ('./aim/quests/link_raid/backup_requests/join/full/battle_full',
+                     'battle_full'),
+                ),
             )
-            if self.already_end != 2:
+            if recovery is None:
+                self.already_end = 1
                 break
-            self.signal.emit(str('点击 join 后战斗已结束，点 ok 后重新匹配加入'))
-            result = self._click_until('./aim/quests/link_raid/backup_requests/join/ok', 'ok')
+            _picture, recovery_name = recovery
+            self.already_end = 2 if recovery_name == 'already_end' else 1
+            if recovery_name == 'battle_full':
+                self.signal.emit(str('点击 join 后房间已满，点 ok 后重新匹配加入'))
+                ok_picture = './aim/quests/link_raid/backup_requests/join/full/ok'
+            else:
+                self.signal.emit(str('点击 join 后战斗已结束，点 ok 后重新匹配加入'))
+                ok_picture = './aim/quests/link_raid/backup_requests/join/ok'
+            result = self._click_until(ok_picture, 'ok')
             if result == 2:
                 self.signal.emit(str('ok点击完成'))
             result = 1
@@ -495,15 +515,17 @@ class LinkRaidWorker(BaseWorker):
     def battle_and_finish(self):
         result = 1
 
-        # 点击结算界面的 tap_to_countinue
+        # 检测模板只用于确认结算页，点击固定的底部中央安全位置。
         result = self._click_until(
                 './aim/quests/link_raid/backup_requests/battle/tap_to_countinue',
                 'tap_to_countinue',
                 BATTLE_TIMEOUT,
                 next_steps=(('./aim/quests/link_raid/backup_requests/battle/back', 'back'),),
+                fixed_click_2k=TAP_TO_CONTINUE_POSITION_2K,
+                foreground_variants=TAP_TO_CONTINUE_FOREGROUND_VARIANTS,
             )
         if result == 2:
-            self.signal.emit(str('tap_to_countinue点击完成'))
+            self.signal.emit(str('tap_to_countinue已识别，安全位置点击完成'))
             self.like_battle_result()
         if not self._running():
             return
@@ -551,3 +573,6 @@ class LinkRaidWorker(BaseWorker):
                 if result == 1:
                     love_time = 0
                     self.signal.emit(str('没有点赞了'))
+                else:
+                    love_time = love_time - 1
+                    self.signal.emit(str('love点击完成，点赞完成一次'))

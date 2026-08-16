@@ -638,6 +638,7 @@ class mywindow(QWidget):
         #后台线程查 GitHub 最新发布版本，避免阻塞界面；同时只允许一个检查在跑
         if self._update_state != 'idle' or self._closing:
             return
+        self._update_cancel.clear()
         job_id = uuid.uuid4().hex
         self._update_job_id = job_id
         self._update_state = 'checking'
@@ -1167,6 +1168,8 @@ class mywindow(QWidget):
         if not workers_stopped or (scale_thread and scale_thread.is_alive()) or update_alive:
             self._append_log('后台任务尚未安全停止，请稍后再关闭窗口。', level='WARNING')
             self._closing = False
+            if not update_alive:
+                self._update_cancel.clear()
             self._refresh_control_state()
             event.ignore()
             return

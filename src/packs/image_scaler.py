@@ -343,6 +343,8 @@ def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None, is_cancelled=None, to
                 }
                 generated += 1
             except subprocess.CalledProcessError as e:
+                if rel_key in manifest:
+                    next_manifest[rel_key] = manifest[rel_key]
                 err = e.stderr.decode("mbcs", "ignore") if e.stderr else str(e)
                 notes.append(f"失败 {lang} {res} {rel}: {err.strip()}")
             except TemplateOperationCancelled:
@@ -350,6 +352,8 @@ def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None, is_cancelled=None, to
                 notes.append(f"{lang} {res} 素材缩放已取消")
                 break
             except Exception as e:
+                if rel_key in manifest:
+                    next_manifest[rel_key] = manifest[rel_key]
                 notes.append(f"失败 {lang} {res} {rel}: {e}")
         removed = 0
         if scan_errors:

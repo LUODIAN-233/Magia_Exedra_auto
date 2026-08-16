@@ -25,6 +25,8 @@ from src.core.input_activity import UserActivityGuard
 RETRY_TIMEOUT = 60
 #战斗等待超时（秒），超时后安全停止
 BATTLE_TIMEOUT = 1800
+POLL_INTERVAL = 0.2
+BATTLE_POLL_INTERVAL = 0.5
 
 
 def retry_until(action, is_running, timeout=RETRY_TIMEOUT, wait=None):
@@ -125,41 +127,64 @@ class BaseWorker(QThread):
             self._activity_guard.stop()
             self._finish()
 
-    def _click_until(self, picture, name, timeout=RETRY_TIMEOUT, next_steps=()):
-        #在 timeout 内反复尝试点击某组模板；超时则安全停止本线程并返回 1。
-        #声明下一步时，正常点击或恢复点击后都必须先确认下一步出现，否则冗余点击当前步骤。
-        #返回 2 表示点击成功，1 表示未点到（含超时停止）。
+    def _click_until(self, picture, name, timeout=RETRY_TIMEOUT, next_steps=(),
+                     fixed_click_2k=None, foreground_variants=None):
+        #在 timeout 内反复尝试模板动作；fixed_click_2k 使用检测组确认页面后点击安全坐标。
+        #声明下一步时，动作完成后必须确认下一步出现；固定坐标动作不会立即重复执行。
+        #返回 2 表示动作成功且已确认推进，1 表示未完成（含超时停止）。
         deadline = time.monotonic() + timeout
         recovery_deadline = time.monotonic() + 5
+        poll_interval = BATTLE_POLL_INTERVAL if timeout >= BATTLE_TIMEOUT else POLL_INTERVAL
         result = 1
         waiting_for_next = False
+        single_action = fixed_click_2k is not None
         while self._running() and time.monotonic() < deadline:
             if waiting_for_next:
-                for next_picture, next_name in next_steps:
-                    if click_action.find_item_with_result(self, next_picture, next_name) == 2:
-                        self.signal.emit(f'已检测到下一步{next_name}，确认{name}页面已经推进。')
-                        result = 2
-                        break
+                next_step = click_action.find_first_item_with_result(self, next_steps)
+                if next_step is not None:
+                    _next_picture, next_name = next_step
+                    self.signal.emit(f'已检测到下一步{next_name}，确认{name}页面已经推进。')
+                    result = 2
                 if result == 2:
                     break
 
-            result = click_action.click_item_with_result(self, picture, name)
-            if result == 2:
-                if not next_steps:
-                    break
-                if waiting_for_next:
-                    self.signal.emit(f'下一步尚未出现，仍检测到{name}，已冗余点击当前步骤。')
+            if not (single_action and waiting_for_next):
+                if fixed_click_2k is not None:
+                    result = click_action.click_fixed_position_for_item_with_result(
+                        self, picture, name, *fixed_click_2k,
+                        foreground_variants=foreground_variants,
+                    )
                 else:
-                    self.signal.emit(f'{name}已点击，正在等待下一步页面出现。')
-                waiting_for_next = True
-                result = 1
-                recovery_deadline = time.monotonic() + 5
+                    result = click_action.click_item_with_result(self, picture, name)
+                if result == 2:
+                    if not next_steps:
+                        break
+                    if waiting_for_next:
+                        self.signal.emit(f'下一步尚未出现，仍检测到{name}，已冗余点击当前步骤。')
+                    elif fixed_click_2k is not None:
+                        self.signal.emit(f'{name}已识别并点击安全位置，正在等待下一步页面出现。')
+                    else:
+                        self.signal.emit(f'{name}已点击，正在等待下一步页面出现。')
+                    waiting_for_next = True
+                    result = 1
+                    recovery_deadline = time.monotonic() + 5
             if time.monotonic() >= recovery_deadline:
                 self.signal.emit(f'连续 5 秒未匹配到{name}，正在观察画面变化。')
                 dynamic = click_action.click_behavior.screen_changes_significantly(self)
                 if dynamic is True:
                     self.signal.emit('2 秒内超过 50% 的画面像素发生变化，疑似正在战斗，跳过恢复点击。')
                 elif dynamic is False:
+                    # 画面观察本身需要 2 秒；下一步可能在此期间出现，恢复点击前必须复查。
+                    next_step = click_action.find_first_item_with_result(
+                        self, next_steps,
+                    ) if next_steps else None
+                    if next_step is not None:
+                        _next_picture, next_name = next_step
+                        self.signal.emit(
+                            f'恢复点击前已检测到下一步{next_name}，跳过原地点击。'
+                        )
+                        result = 2
+                        break
                     clicked = click_action.click_behavior.click_last_automation_position(self)
                     if clicked == 2:
                         self.signal.emit('画面较稳定，已在脚本上一次操作位置执行一次恢复点击。')
@@ -173,7 +198,7 @@ class BaseWorker(QThread):
                         self.signal.emit('画面较稳定，但没有可安全使用的上一次操作位置，未执行恢复点击。')
                 #当前周期无论点击、跳过或截图失败，都从现在开始等待下一个 5 秒周期。
                 recovery_deadline = time.monotonic() + 5
-            if self._wait(min(0.5, max(0, deadline - time.monotonic()))):
+            if self._wait(min(poll_interval, max(0, deadline - time.monotonic()))):
                 break
         if result == 1 and self._running():
             self._emit_log(

@@ -69,7 +69,7 @@ Adding a mode requires a no-argument-constructible `BaseWorker` subclass decorat
 
 `BaseWorker(QThread)`, `retry_until()`, `RETRY_TIMEOUT=60`, and `BATTLE_TIMEOUT=1800`. Per-worker state is `_active` plus `_stop_event`; `start()` refuses restart while the old thread still runs.
 
-During every template wait, each continuous 5-second miss triggers a 2-second observation of the game client. If more than 50% of pixels change, the activity is treated as likely battle animation and only that recovery cycle is skipped. Otherwise, one recovery click is made at the last safe automation position. For flows with explicitly declared next-step templates, either a normal click or a recovery click returns success only after one of those templates is recognized; while the current template remains, it is clicked redundantly. The 5-second cycle then continues until success, timeout, or cancellation.
+During every template wait, each continuous 5-second miss triggers a 2-second observation of the game client. If more than 50% of pixels change, the activity is treated as likely battle animation and only that recovery cycle is skipped. On a stable image, the next step is checked again before a recovery click at the last safe automation position. For flows with explicitly declared next-step templates, either a normal click or a recovery click returns success only after one is recognized. Ordinary templates may be clicked redundantly while the current page remains; fixed safe-position actions are not repeated immediately. The cycle continues until success, timeout, or cancellation.
 
 Each run starts a `UserActivityGuard`. Keyboard input or cumulative large mouse movement pauses template actions until the user has been idle for 5 seconds. Bot mouse input runs inside an automation guard and therefore does not count as user activity; successful automation input also updates the last safe position.
 
@@ -77,7 +77,7 @@ Each run starts a `UserActivityGuard`. Keyboard input or cumulative large mouse 
 
 ### link_raid.py
 
-Link Raid flow: navigation, backup requests, refresh, joined-battle cleanup, level selection, join/LP handling, battle completion, likes, and return. Level selection first locates the selected template's best candidate, then compares every supported level near that same position and independently compares the central level-number region. It clicks only when both the full image and number region classify as the selected level; every level template is therefore a startup-required competitor. Normal results and joined-battle cleanup invoke the shared like flow only after `tap_to_countinue` succeeds; clicking `joined_battles` itself does not trigger likes. It supports LV4 and LV6-LV12. If the selected level is missing or cannot be clicked, it refreshes and searches again instead of joining another level. Initial navigation and scrolling use scaled 2K-baseline coordinates.
+Link Raid flow: navigation, backup requests, refresh, joined-battle cleanup, level selection, join/LP handling, battle completion, likes, and return. Level selection compares every supported level and the central number region at the selected candidate. Candidates at 9/10, 10/10, or with an unreadable participant count are skipped; full and already-ended join results are dismissed and rematched. `tap_to_countinue` confirms the result screen only from the `_1/2` text foreground, then clicks a scaled safe bottom-center coordinate and invokes likes after `back` appears. It supports LV4 and LV6-LV12, never substitutes another level, and uses scaled 2K-baseline coordinates for navigation and scrolling.
 
 ### crystalis.py
 
@@ -87,11 +87,11 @@ Crystalis flow. It first performs a scaled 2K-baseline wake-up click at `(2000,1
 
 ### click_action.py
 
-Collects contiguous numbered template variants, compares the entire group against one shared frame, and finds or clicks only the globally highest-scoring candidate. It also provides raw/scaled coordinate actions and tolerant client-resolution detection.
+Collects contiguous numbered template variants, compares a group against one shared frame, and selects only the global highest score. Multiple next-step groups can share a frame; fixed-coordinate actions can restrict detection variants and separate recognition from the click position. It also provides raw/scaled coordinate actions and tolerant client-resolution detection.
 
 ### click_behavior.py
 
-Window lookup/focus, visible game-window capture, OpenCV matching, client-only motion sampling, and mouse action. Before matching, the same 3x3 Gaussian blur is applied to both screenshot and templates, followed by `TM_SQDIFF_NORMED`. Template recognition and recovery-motion detection sample only the game client. The game must remain visible and unobstructed.
+Window lookup/focus, visible game-window capture, OpenCV matching, client-only motion sampling, and mouse action. Template reads, Gaussian blur, and text-foreground masks are cached by file signature, while one screenshot can serve multiple groups. Normal matching applies the same 3x3 Gaussian blur to screenshot and templates; text mode uses an Otsu foreground mask so `TM_SQDIFF_NORMED` ignores animated backgrounds. Recognition and recovery sampling use only the game client, which must remain visible and unobstructed.
 
 ### template_confidence.py
 
