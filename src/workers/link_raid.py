@@ -21,6 +21,10 @@ LEVEL_LIST_SEARCH_REGION = (0.20, 0.18, 0.70, 0.78)
 SCROLL_SETTLE_DELAY = 1.0
 TAP_TO_CONTINUE_POSITION_2K = (1280, 1367)
 TAP_TO_CONTINUE_FOREGROUND_VARIANTS = (1, 2)
+TAP_TO_CONTINUE_MAX_CLICKS = 2
+LIKE_SCROLL_SETTLE_DELAY = 1.0
+LIKE_RETRY_TIMEOUT = 3.0
+LIKE_NEUTRAL_MOUSE_POSITION_2K = (1280, 120)
 
 
 @register(
@@ -273,9 +277,10 @@ class LinkRaidWorker(BaseWorker):
                 next_steps=(('./aim/quests/link_raid/backup_requests/battle/back', 'back'),),
                 fixed_click_2k=TAP_TO_CONTINUE_POSITION_2K,
                 foreground_variants=TAP_TO_CONTINUE_FOREGROUND_VARIANTS,
+                fixed_click_limit=TAP_TO_CONTINUE_MAX_CLICKS,
             )
             if result == 2:
-                self.signal.emit(str('tap_to_countinue已识别，安全位置点击完成'))
+                self.signal.emit(str('tap_to_countinue页面已推进'))
                 self.like_battle_result()
             if not self._running():
                 return
@@ -523,9 +528,10 @@ class LinkRaidWorker(BaseWorker):
                 next_steps=(('./aim/quests/link_raid/backup_requests/battle/back', 'back'),),
                 fixed_click_2k=TAP_TO_CONTINUE_POSITION_2K,
                 foreground_variants=TAP_TO_CONTINUE_FOREGROUND_VARIANTS,
+                fixed_click_limit=TAP_TO_CONTINUE_MAX_CLICKS,
             )
         if result == 2:
-            self.signal.emit(str('tap_to_countinue已识别，安全位置点击完成'))
+            self.signal.emit(str('tap_to_countinue页面已推进'))
             self.like_battle_result()
         if not self._running():
             return
@@ -567,12 +573,31 @@ class LinkRaidWorker(BaseWorker):
                     return
                 if not self._running():
                     return
-                click_action.move_a_to_b_scaled(1400, 1000, 1400, 600, self._running)
-                result = click_action.click_item_with_result(self, './aim/quests/link_raid/backup_requests/battle/love',
-                                                             'love')
+                moved = click_action.move_a_to_b_scaled(
+                    1400, 1000, 1400, 600, self._running,
+                )
+                if moved != 2:
+                    self._emit_log('点赞列表滑动失败，结束本页点赞。', 'WARNING')
+                    break
+                click_action.move_position_scaled(
+                    *LIKE_NEUTRAL_MOUSE_POSITION_2K, self._running,
+                )
+                self.signal.emit('点赞列表滑动完成，等待页面稳定后继续识别')
+                if self._wait(LIKE_SCROLL_SETTLE_DELAY):
+                    return
+                result = retry_until(
+                    lambda: click_action.click_item_with_result(
+                        self,
+                        './aim/quests/link_raid/backup_requests/battle/love',
+                        'love',
+                    ),
+                    self._running,
+                    timeout=LIKE_RETRY_TIMEOUT,
+                    wait=self._wait,
+                )
                 if result == 1:
                     love_time = 0
-                    self.signal.emit(str('没有点赞了'))
+                    self.signal.emit(str('滑动后连续 3 秒未找到可点赞目标，本页点赞结束'))
                 else:
                     love_time = love_time - 1
-                    self.signal.emit(str('love点击完成，点赞完成一次'))
+                    self.signal.emit(str('滑动后已找到 love，点赞完成一次'))

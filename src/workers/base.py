@@ -128,16 +128,18 @@ class BaseWorker(QThread):
             self._finish()
 
     def _click_until(self, picture, name, timeout=RETRY_TIMEOUT, next_steps=(),
-                     fixed_click_2k=None, foreground_variants=None):
+                     fixed_click_2k=None, foreground_variants=None,
+                     fixed_click_limit=1):
         #在 timeout 内反复尝试模板动作；fixed_click_2k 使用检测组确认页面后点击安全坐标。
-        #声明下一步时，动作完成后必须确认下一步出现；固定坐标动作不会立即重复执行。
+        #声明下一步时，动作完成后必须确认下一步出现；固定坐标动作只在重新识别后有限重试。
         #返回 2 表示动作成功且已确认推进，1 表示未完成（含超时停止）。
         deadline = time.monotonic() + timeout
         recovery_deadline = time.monotonic() + 5
         poll_interval = BATTLE_POLL_INTERVAL if timeout >= BATTLE_TIMEOUT else POLL_INTERVAL
         result = 1
         waiting_for_next = False
-        single_action = fixed_click_2k is not None
+        fixed_click_count = 0
+        fixed_click_limit = max(1, int(fixed_click_limit))
         while self._running() and time.monotonic() < deadline:
             if waiting_for_next:
                 next_step = click_action.find_first_item_with_result(self, next_steps)
@@ -148,7 +150,12 @@ class BaseWorker(QThread):
                 if result == 2:
                     break
 
-            if not (single_action and waiting_for_next):
+            can_attempt_fixed = (
+                fixed_click_2k is None
+                or not waiting_for_next
+                or fixed_click_count < fixed_click_limit
+            )
+            if can_attempt_fixed:
                 if fixed_click_2k is not None:
                     result = click_action.click_fixed_position_for_item_with_result(
                         self, picture, name, *fixed_click_2k,
@@ -157,19 +164,31 @@ class BaseWorker(QThread):
                 else:
                     result = click_action.click_item_with_result(self, picture, name)
                 if result == 2:
+                    if fixed_click_2k is not None:
+                        fixed_click_count += 1
                     if not next_steps:
                         break
-                    if waiting_for_next:
+                    if fixed_click_2k is not None:
+                        self.signal.emit(
+                            f'{name}已识别并执行第{fixed_click_count}/'
+                            f'{fixed_click_limit}次安全点击，正在等待下一步页面出现。'
+                        )
+                    elif waiting_for_next:
                         self.signal.emit(f'下一步尚未出现，仍检测到{name}，已冗余点击当前步骤。')
-                    elif fixed_click_2k is not None:
-                        self.signal.emit(f'{name}已识别并点击安全位置，正在等待下一步页面出现。')
                     else:
                         self.signal.emit(f'{name}已点击，正在等待下一步页面出现。')
                     waiting_for_next = True
                     result = 1
                     recovery_deadline = time.monotonic() + 5
             if time.monotonic() >= recovery_deadline:
-                self.signal.emit(f'连续 5 秒未匹配到{name}，正在观察画面变化。')
+                if foreground_variants:
+                    variants = '/'.join(f'_{index}' for index in foreground_variants)
+                    self.signal.emit(
+                        f'连续 5 秒未通过文字前景轮廓匹配到{name}'
+                        f'（仅使用 {variants}），正在观察画面变化。'
+                    )
+                else:
+                    self.signal.emit(f'连续 5 秒未匹配到{name}，正在观察画面变化。')
                 dynamic = click_action.click_behavior.screen_changes_significantly(self)
                 if dynamic is True:
                     self.signal.emit('2 秒内超过 50% 的画面像素发生变化，疑似正在战斗，跳过恢复点击。')
@@ -185,6 +204,12 @@ class BaseWorker(QThread):
                         )
                         result = 2
                         break
+                    if fixed_click_2k is not None:
+                        self.signal.emit(
+                            f'{name}属于固定安全坐标动作，未识别时不执行上一次位置恢复点击。'
+                        )
+                        recovery_deadline = time.monotonic() + 5
+                        continue
                     clicked = click_action.click_behavior.click_last_automation_position(self)
                     if clicked == 2:
                         self.signal.emit('画面较稳定，已在脚本上一次操作位置执行一次恢复点击。')

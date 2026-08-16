@@ -175,13 +175,41 @@ def _load_template(path):
 
 
 def _foreground_mask(template):
-    """从深色背景上的亮色文字模板生成前景掩码。"""
+    """从深色背景上的亮色文字模板提取文字轮廓。"""
     gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
     _threshold, mask = cv2.threshold(
         gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU,
     )
-    mask = cv2.dilate(mask, np.ones((3, 3), np.uint8))
     return mask if np.any(mask) else None
+
+
+def _foreground_binary(screen):
+    """按局部亮度提取画面文字，避免淡入淡出改变绝对亮度。"""
+    gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
+    short_side = min(gray.shape[:2])
+    max_block = short_side if short_side % 2 else short_side - 1
+    block_size = max(15, round(short_side * 31 / 1440))
+    if block_size % 2 == 0:
+        block_size += 1
+    block_size = min(block_size, max_block)
+    if block_size < 3:
+        return None
+    return cv2.adaptiveThreshold(
+        gray, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        block_size, 0,
+    )
+
+
+def _foreground_support(mask):
+    """文字笔画使用满权重，周围一像素负空间使用四成权重。"""
+    foreground = mask > 0
+    nearby = cv2.dilate(mask, np.ones((3, 3), np.uint8)) > 0
+    support = np.zeros(mask.shape, np.float32)
+    support[nearby] = 0.4
+    support[foreground] = 1.0
+    return support
 
 
 @lru_cache(maxsize=512)
@@ -262,7 +290,8 @@ def best_template_matches(template_groups, search_region=None, foreground_groups
     if screen is None:
         return empty
     # 整组候选共享同一张截图和预处理结果，保证分数可比并避免重复处理全窗口。
-    match_screen = cv2.GaussianBlur(screen, (3, 3), 0)
+    match_screen = None
+    foreground_screen = None
     results = []
     for template_paths, use_foreground in zip(groups, foreground):
         best = None
@@ -275,7 +304,19 @@ def best_template_matches(template_groups, search_region=None, foreground_groups
             if use_foreground and mask is None:
                 logger.warning('无法生成模板文字前景掩码: %s', path)
                 continue
-            matched = _match_one(match_screen, match_template, mask)
+            if use_foreground:
+                if foreground_screen is None:
+                    foreground_screen = _foreground_binary(screen)
+                if foreground_screen is None:
+                    logger.warning('无法从游戏画面提取文字前景')
+                    continue
+                # 加权检查文字及其周边负空间，兼顾淡入淡出与纯亮色误报。
+                support = _foreground_support(mask)
+                matched = _match_one(foreground_screen, mask, support)
+            else:
+                if match_screen is None:
+                    match_screen = cv2.GaussianBlur(screen, (3, 3), 0)
+                matched = _match_one(match_screen, match_template)
             if matched is None:
                 logger.warning('模板尺寸大于游戏窗口或无法匹配: %s', path)
                 continue

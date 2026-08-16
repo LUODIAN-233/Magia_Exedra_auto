@@ -30,13 +30,17 @@ class ClientCoordinateTests(unittest.TestCase):
                 patch.object(click_action.time, 'sleep'):
             self.assertEqual(click_action.click_position(100, 200, callback), 2)
             self.assertEqual(click_action.move_a_to_b(5, 6, 200, 300, callback), 2)
+            self.assertEqual(click_action.move_position(50, 60, callback), 2)
 
-        self.assertEqual(move_to.call_args_list, [call(130, 250), call(35, 56)])
+        self.assertEqual(move_to.call_args_list, [
+            call(130, 250), call(35, 56), call(80, 110),
+        ])
         click.assert_called_once_with(130, 250, button='left')
         drag_to.assert_called_once_with(230, 350, duration=0.5, button='left')
         self.assertEqual(record.call_args_list, [
             call(callback, (130, 250)),
             call(callback, (230, 350)),
+            call(callback, (80, 110)),
         ])
 
 
@@ -138,6 +142,36 @@ class FixedPositionTemplateActionTests(unittest.TestCase):
         fixed_click.assert_called_once()
         click.assert_not_called()
 
+    def test_click_until_allows_second_confirmed_fixed_click(self):
+        next_step = ('./aim/back', 'back')
+
+        class Worker:
+            signal = types.SimpleNamespace(emit=lambda _message: None)
+            _running = staticmethod(lambda: True)
+            _wait = staticmethod(lambda _seconds: False)
+            _emit_log = staticmethod(
+                lambda _message, _level: (_ for _ in ()).throw(
+                    AssertionError('不应超时')
+                )
+            )
+            _finish = staticmethod(
+                lambda: (_ for _ in ()).throw(AssertionError('不应停止'))
+            )
+
+        with patch.object(worker_base.click_action,
+                          'click_fixed_position_for_item_with_result',
+                          return_value=2) as fixed_click, \
+                patch.object(worker_base.click_action, 'find_first_item_with_result',
+                             side_effect=(None, next_step)):
+            result = worker_base.BaseWorker._click_until(
+                Worker(), './aim/tap_to_countinue', 'tap_to_countinue', timeout=1,
+                next_steps=(next_step,), fixed_click_2k=(1280, 1367),
+                foreground_variants=(1, 2), fixed_click_limit=2,
+            )
+
+        self.assertEqual(result, 2)
+        self.assertEqual(fixed_click.call_count, 2)
+
 
 class ForegroundTemplateMatchTests(unittest.TestCase):
     def test_text_mask_ignores_changed_background(self):
@@ -149,7 +183,11 @@ class ForegroundTemplateMatchTests(unittest.TestCase):
         x, y = 70, 35
         foreground = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY) > 80
         region = screen[y:y + template.shape[0], x:x + template.shape[1]]
-        region[foreground] = template[foreground]
+        # 游戏文字会淡入淡出；保留一半透明度，原始亮度匹配会跌破阈值。
+        region[foreground] = (
+            region[foreground].astype(float) * 0.5
+            + template[foreground].astype(float) * 0.5
+        ).astype(np.uint8)
         blurred = cv2.GaussianBlur(template, (3, 3), 0)
 
         with patch.object(click_behavior, '_capture_game_window',
@@ -163,6 +201,52 @@ class ForegroundTemplateMatchTests(unittest.TestCase):
                                      y + template.shape[0] // 2))
         self.assertGreater(masked[1], full[1])
         self.assertGreater(masked[1], 0.8)
+
+    def test_text_outline_rejects_plain_bright_area(self):
+        template = np.zeros((48, 180, 3), dtype=np.uint8)
+        cv2.putText(template, 'continue', (4, 37), cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0, (220, 220, 220), 2, cv2.LINE_AA)
+        mask = click_behavior._foreground_mask(template)
+        support = click_behavior._foreground_support(mask)
+        bright_screen = np.full((120, 320), 255, dtype=np.uint8)
+
+        _location, _size, score = click_behavior._match_one(
+            bright_screen, mask, support,
+        )
+
+        self.assertLess(score, 0.8)
+
+    def test_committed_jp_text_templates_tolerate_low_opacity(self):
+        template_dir = (
+            Path(__file__).resolve().parents[1] / 'language' / 'JP' /
+            'JP_2560x1440' / 'quests' / 'link_raid' / 'backup_requests' /
+            'battle'
+        )
+        for index in (1, 2):
+            path = template_dir / f'tap_to_countinue_{index}.png'
+            template = cv2.imdecode(
+                np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR,
+            )
+            mask = click_behavior._foreground_mask(template)
+            support = click_behavior._foreground_support(mask)
+            foreground = mask > 0
+            height, width = template.shape[:2]
+            screen = np.random.default_rng(index).integers(
+                10, 80, (1440, 1440, 3), dtype=np.uint8,
+            )
+            x, y = 500, 1200
+            region = screen[y:y + height, x:x + width]
+            region[foreground] = (
+                region[foreground].astype(float) * 0.6
+                + template[foreground].astype(float) * 0.4
+            ).astype(np.uint8)
+
+            location, _size, score = click_behavior._match_one(
+                click_behavior._foreground_binary(screen), mask, support,
+            )
+
+            self.assertEqual(location, (x, y), path.name)
+            self.assertGreater(score, 0.8, path.name)
 
 
 class RecoveryClickSafetyTests(unittest.TestCase):
@@ -286,6 +370,24 @@ class ParticipantDetectionTests(unittest.TestCase):
                 6, {}, ('EN', '2560x1440'), skip_crowded=True, name='lv6',
             )
         self.assertEqual(detected, second)
+
+    def test_no_accepted_candidate_does_not_query_none_threshold(self):
+        with patch.object(click_behavior, 'best_competing_template_matches',
+                          return_value=[]), \
+                patch.object(click_action, '_template_files',
+                             return_value=[Path('lv4_1.png')]), \
+                patch.object(click_action.template_confidence, 'threshold_for',
+                             side_effect=AssertionError('不应查询空模板路径')):
+            found = click_action.find_competing_item_with_result(
+                types.SimpleNamespace(
+                    expected_pack=('JP', '2560x1440'),
+                    _running=lambda: True,
+                    _wait_for_user_idle=lambda: True,
+                ),
+                4, {4: 'lv4'}, 'lv4', skip_crowded=True,
+            )
+
+        self.assertEqual(found, 1)
 
 
 class CompetingMatchCacheTests(unittest.TestCase):
@@ -505,13 +607,58 @@ class LinkRaidRecoveryTests(unittest.TestCase):
             def _finish():
                 pass
 
-        with patch.object(link_raid, 'retry_until', return_value=2), \
+        with patch.object(link_raid.click_action, 'find_item_with_result',
+                          return_value=2), \
                 patch.object(link_raid.click_action, 'click_item_with_result',
                              side_effect=click_item), \
-                patch.object(link_raid.click_action, 'move_a_to_b_scaled', return_value=2):
+                patch.object(link_raid.click_action, 'move_a_to_b_scaled', return_value=2), \
+                patch.object(link_raid.click_action, 'move_position_scaled', return_value=2):
             link_raid.LinkRaidWorker.like_battle_result(Worker())
 
         self.assertEqual(state['successes'], 9)
+
+    def test_scrolled_likes_retry_after_first_post_scroll_miss(self):
+        state = {'calls': 0, 'successes': 0}
+
+        def click_item(*_args, **_kwargs):
+            state['calls'] += 1
+            if state['calls'] < 3:
+                return 1
+            state['successes'] += 1
+            return 2
+
+        class Worker:
+            signal = LinkRaidRecoveryTests.Signal()
+
+            @staticmethod
+            def _running():
+                return state['successes'] == 0
+
+            @staticmethod
+            def _wait(_seconds):
+                return False
+
+            @staticmethod
+            def _emit_log(_message, _level):
+                pass
+
+            @staticmethod
+            def _finish():
+                pass
+
+        with patch.object(link_raid.click_action, 'find_item_with_result',
+                          return_value=2), \
+                patch.object(link_raid.click_action, 'click_item_with_result',
+                             side_effect=click_item), \
+                patch.object(link_raid.click_action, 'move_a_to_b_scaled',
+                             return_value=2) as scroll, \
+                patch.object(link_raid.click_action, 'move_position_scaled',
+                             return_value=2) as move_away:
+            link_raid.LinkRaidWorker.like_battle_result(Worker())
+
+        self.assertEqual(state, {'calls': 3, 'successes': 1})
+        scroll.assert_called_once()
+        move_away.assert_called_once()
 
 
 class ScalerManifestTests(unittest.TestCase):

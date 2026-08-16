@@ -71,6 +71,8 @@ def _competing_match_accepted(detected, selected, selection):
     if not detected or len(detected) < 7:
         return False
     label, text_label, point, score, text_score, path, text_path = detected
+    if path is None or text_path is None:
+        return False
     full_threshold = template_confidence.threshold_for(path, selection)
     text_threshold = template_confidence.threshold_for(text_path, selection)
     return label == selected and text_label == selected and point is not None \
@@ -221,7 +223,7 @@ def click_fixed_position_for_item_with_result(self, picture, name, x_2k, y_2k,
         name,
     )
     if detected is None:
-        logger.debug('比较了%s个模板，%s未通过0.6秒三次页面确认',
+        logger.debug('比较了%s个文字前景模板，%s未通过0.6秒三次页面确认',
                      len(files), name)
         return 1
     _avg, score, path = detected
@@ -230,7 +232,7 @@ def click_fixed_position_for_item_with_result(self, picture, name, x_2k, y_2k,
     if result == 2:
         _emit_template_click(
             self,
-            f'已识别页面 {name}（检测模板 {path}），置信度 {score:.4f}，'
+            f'已通过文字前景轮廓识别页面 {name}（检测模板 {path}），置信度 {score:.4f}，'
             f'阈值 {threshold:.4f}；已点击安全位置 ({x_2k}, {y_2k})',
         )
         if _wait(self, POST_CLICK_DELAY):
@@ -336,8 +338,8 @@ def click_competing_item_with_result(self, selected, pictures, name, search_regi
         return 1
     detected, click_point = confirmed
     label, text_label, _avg, score, text_score, path, text_path = detected
-    full_threshold = template_confidence.threshold_for(path, selection)
-    text_threshold = template_confidence.threshold_for(text_path, selection)
+    full_threshold = template_confidence.threshold_for(path, selection) if path else None
+    text_threshold = template_confidence.threshold_for(text_path, selection) if text_path else None
     logger.debug('竞争识别点击%s：整图%s %.4f/%.4f，文字%s %.4f/%.4f',
                  name, path, score, full_threshold, text_path, text_score, text_threshold)
     result = click_behavior.click_auto(click_point, can_click)
@@ -367,8 +369,8 @@ def find_competing_item_with_result(self, selected, pictures, name, search_regio
         )
     detected = (label, text_label, _avg, score, text_score, path, text_path)
     found = _competing_match_accepted(detected, selected, selection)
-    full_threshold = template_confidence.threshold_for(path, selection)
-    text_threshold = template_confidence.threshold_for(text_path, selection)
+    full_threshold = template_confidence.threshold_for(path, selection) if path else None
+    text_threshold = template_confidence.threshold_for(text_path, selection) if text_path else None
     logger.debug('竞争寻找%s：整图=%s/%s %.4f/%s，文字=%s/%s %.4f/%s，结果%s',
                  name, label, path, score,
                  f'{full_threshold:.4f}' if full_threshold is not None else '不可用',
@@ -405,6 +407,33 @@ def click_position(move_lelt, move_top, can_click=None):
         time.sleep(0.1)
     except Exception as e:
         logger.warning('坐标点击失败: %s', e)
+        return 1
+    return 2
+
+
+def move_position(move_lelt, move_top, can_move=None):
+    """只移动鼠标到客户区坐标，用于移开会触发悬停状态的指针。"""
+    if not _wait_for_user(can_move):
+        return 1
+    if click_behavior.find_win('MadokaExedra') is None:
+        return 1
+    client = click_behavior.get_client_region('MadokaExedra')
+    if client is None:
+        return 1
+    left, top, width, height = client
+    if not (0 <= move_lelt < width and 0 <= move_top < height):
+        logger.warning('移动坐标超出游戏客户区: (%s, %s)，客户区大小 %sx%s',
+                       move_lelt, move_top, width, height)
+        return 1
+    try:
+        with _automation_input(can_move):
+            pyautogui.moveTo(left + move_lelt, top + move_top)
+            _record_automation_position(
+                can_move, (left + move_lelt, top + move_top),
+            )
+        time.sleep(0.1)
+    except Exception as e:
+        logger.warning('鼠标移动失败: %s', e)
         return 1
     return 2
 
@@ -463,6 +492,15 @@ def click_position_scaled(x_2k, y_2k, can_click=None):
         logger.warning('无法确认模板 pack 的坐标缩放倍率，拒绝位置点击')
         return 1
     return click_position(round(x_2k * f), round(y_2k * f), can_click)
+
+
+def move_position_scaled(x_2k, y_2k, can_move=None):
+    # 把 2K 基准坐标按当前分辨率缩放后移动鼠标，不点击。
+    f = _res_scale_factor()
+    if f is None:
+        logger.warning('无法确认模板 pack 的坐标缩放倍率，拒绝移动鼠标')
+        return 1
+    return move_position(round(x_2k * f), round(y_2k * f), can_move)
 
 
 def move_a_to_b_scaled(ax_2k, ay_2k, bx_2k, by_2k, can_move=None):
