@@ -211,10 +211,73 @@ class ForegroundTemplateMatchTests(unittest.TestCase):
         bright_screen = np.full((120, 320), 255, dtype=np.uint8)
 
         _location, _size, score = click_behavior._match_one(
-            bright_screen, mask, support,
+            click_behavior._foreground_outline(bright_screen),
+            click_behavior._foreground_outline(mask),
+            support,
         )
 
         self.assertLess(score, 0.8)
+
+    def test_text_outline_tolerates_supported_resolution_rasterization(self):
+        source_root = Path(__file__).resolve().parents[1] / 'language'
+        for language in ('EN', 'JP'):
+            template_dir = (
+                source_root / language / f'{language}_2560x1440' / 'quests' /
+                'link_raid' / 'backup_requests' / 'battle'
+            )
+            for index in (1, 2):
+                source = cv2.imdecode(
+                    np.fromfile(
+                        template_dir / f'tap_to_countinue_{index}.png',
+                        dtype=np.uint8,
+                    ),
+                    cv2.IMREAD_COLOR,
+                )
+                for scale, client_height in (
+                        (0.5, 720), (0.75, 1080), (1.0, 1440), (1.5, 2160)):
+                    size = (round(source.shape[1] * scale),
+                            round(source.shape[0] * scale))
+                    # Triangle 派生模板与原生游戏字体可能采用不同采样方式。
+                    template = cv2.resize(
+                        source, size, interpolation=cv2.INTER_LINEAR,
+                    )
+                    native = cv2.resize(
+                        source, size, interpolation=cv2.INTER_NEAREST,
+                    )
+                    mask = click_behavior._foreground_mask(template)
+                    support = click_behavior._foreground_support(mask)
+                    gray = cv2.cvtColor(native, cv2.COLOR_BGR2GRAY)
+                    block_size = max(15, round(client_height * 31 / 1440))
+                    if block_size % 2 == 0:
+                        block_size += 1
+                    native_binary = cv2.adaptiveThreshold(
+                        gray, 255,
+                        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                        cv2.THRESH_BINARY,
+                        block_size, 0,
+                    )
+                    outline = click_behavior._foreground_outline(mask)
+
+                    _location, _size, score = click_behavior._match_one(
+                        click_behavior._foreground_outline(native_binary),
+                        outline,
+                        support,
+                    )
+                    bright = np.full(mask.shape, 255, dtype=np.uint8)
+                    _location, _size, bright_score = click_behavior._match_one(
+                        click_behavior._foreground_outline(bright),
+                        outline,
+                        support,
+                    )
+
+                    label = (
+                        f'{language} tap_to_countinue_{index}.png '
+                        f'{client_height}p'
+                    )
+                    self.assertGreater(score, 0.8, f'{label}: {score:.4f}')
+                    self.assertLess(
+                        bright_score, 0.8, f'{label} 亮区: {bright_score:.4f}',
+                    )
 
     def test_committed_jp_text_templates_tolerate_low_opacity(self):
         template_dir = (
@@ -242,7 +305,11 @@ class ForegroundTemplateMatchTests(unittest.TestCase):
             ).astype(np.uint8)
 
             location, _size, score = click_behavior._match_one(
-                click_behavior._foreground_binary(screen), mask, support,
+                click_behavior._foreground_outline(
+                    click_behavior._foreground_binary(screen),
+                ),
+                click_behavior._foreground_outline(mask),
+                support,
             )
 
             self.assertEqual(location, (x, y), path.name)
@@ -299,6 +366,58 @@ class RecoveryClickSafetyTests(unittest.TestCase):
         recovery_click.assert_not_called()
         self.assertTrue(any('恢复点击前已检测到下一步tap_to_countinue' in message
                             for message in messages))
+
+    def test_fixed_action_rejects_next_step_before_first_confirmed_click(self):
+        messages = []
+
+        class Worker:
+            signal = types.SimpleNamespace(emit=messages.append)
+            _running = staticmethod(lambda: True)
+            _wait = staticmethod(lambda _seconds: False)
+            _emit_log = staticmethod(
+                lambda _message, _level: (_ for _ in ()).throw(
+                    AssertionError('不应超时')
+                )
+            )
+            _finish = staticmethod(
+                lambda: (_ for _ in ()).throw(AssertionError('不应停止'))
+            )
+
+        next_step = ('./aim/back', 'back')
+        worker = Worker()
+        with patch.object(worker_base.time, 'monotonic', side_effect=(
+                100, 100, 106, 106, 106, 106, 106, 106, 106, 106)), \
+                patch.object(
+                    worker_base.click_action,
+                    'click_fixed_position_for_item_with_result',
+                    side_effect=(1, 2),
+                ) as fixed_click, \
+                patch.object(
+                    worker_base.click_action.click_behavior,
+                    'screen_changes_significantly',
+                    return_value=False,
+                ), \
+                patch.object(
+                    worker_base.click_action,
+                    'find_first_item_with_result',
+                    return_value=next_step,
+                ) as find_next:
+            result = worker_base.BaseWorker._click_until(
+                worker,
+                './aim/tap_to_countinue',
+                'tap_to_countinue',
+                timeout=60,
+                next_steps=(next_step,),
+                fixed_click_2k=(1280, 1367),
+                foreground_variants=(1, 2),
+                fixed_click_limit=2,
+            )
+
+        self.assertEqual(result, 2)
+        self.assertEqual(fixed_click.call_count, 2)
+        find_next.assert_called_once_with(worker, (next_step,))
+        self.assertFalse(any('恢复点击前已检测到下一步back' in message
+                             for message in messages))
 
 
 class PausedInputTests(unittest.TestCase):

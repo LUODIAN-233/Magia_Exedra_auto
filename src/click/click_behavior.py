@@ -202,10 +202,15 @@ def _foreground_binary(screen):
     )
 
 
+def _foreground_outline(binary):
+    """柔化二值文字轮廓，容忍不同分辨率下约一像素的栅格差异。"""
+    return cv2.GaussianBlur(binary, (7, 7), 0)
+
+
 def _foreground_support(mask):
-    """文字笔画使用满权重，周围一像素负空间使用四成权重。"""
+    """文字笔画使用满权重，周围三像素负空间使用四成权重。"""
     foreground = mask > 0
-    nearby = cv2.dilate(mask, np.ones((3, 3), np.uint8)) > 0
+    nearby = cv2.dilate(mask, np.ones((7, 7), np.uint8)) > 0
     support = np.zeros(mask.shape, np.float32)
     support[nearby] = 0.4
     support[foreground] = 1.0
@@ -307,12 +312,16 @@ def best_template_matches(template_groups, search_region=None, foreground_groups
             if use_foreground:
                 if foreground_screen is None:
                     foreground_screen = _foreground_binary(screen)
+                    if foreground_screen is not None:
+                        foreground_screen = _foreground_outline(foreground_screen)
                 if foreground_screen is None:
                     logger.warning('无法从游戏画面提取文字前景')
                     continue
-                # 加权检查文字及其周边负空间，兼顾淡入淡出与纯亮色误报。
+                # 柔化轮廓后加权检查文字及其周边负空间，兼顾缩放差异与纯亮色误报。
                 support = _foreground_support(mask)
-                matched = _match_one(foreground_screen, mask, support)
+                matched = _match_one(
+                    foreground_screen, _foreground_outline(mask), support,
+                )
             else:
                 if match_screen is None:
                     match_screen = cv2.GaussianBlur(screen, (3, 3), 0)

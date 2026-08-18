@@ -194,9 +194,14 @@ class BaseWorker(QThread):
                     self.signal.emit('2 秒内超过 50% 的画面像素发生变化，疑似正在战斗，跳过恢复点击。')
                 elif dynamic is False:
                     # 画面观察本身需要 2 秒；下一步可能在此期间出现，恢复点击前必须复查。
+                    # 固定坐标动作没有恢复点击，必须先真实识别并点击当前步骤，才接受下一步。
+                    can_confirm_next = (
+                        bool(next_steps)
+                        and (fixed_click_2k is None or waiting_for_next)
+                    )
                     next_step = click_action.find_first_item_with_result(
                         self, next_steps,
-                    ) if next_steps else None
+                    ) if can_confirm_next else None
                     if next_step is not None:
                         _next_picture, next_name = next_step
                         self.signal.emit(
