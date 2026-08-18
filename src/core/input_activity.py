@@ -128,11 +128,12 @@ class UserActivityGuard:
             dx = position[0] - previous[0]
             dy = position[1] - previous[1]
             step = max(abs(dx), abs(dy))
-            if self._paused:
-                if step < 3:
-                    return None
-                return f'鼠标移动 Δx={dx}px、Δy={dy}px，当前位置 {position}'
             self._mouse_travel += step
+            if self._paused:
+                if self._mouse_travel < 3:
+                    return None
+                return (f'鼠标累计移动 {self._mouse_travel}px'
+                        f'（本次 Δx={dx}px、Δy={dy}px，当前位置 {position}）')
             if self._mouse_travel < self.mouse_threshold:
                 return None
             return (f'鼠标累计移动 {self._mouse_travel}px'

@@ -6,7 +6,7 @@
     <img alt="Platform" src="https://img.shields.io/badge/プラットフォーム-Windows-0078D4">
     <img alt="Architecture" src="https://img.shields.io/badge/アーキテクチャ-x86--64-555555">
     <img alt="GUI" src="https://img.shields.io/badge/GUI-PySide6-41CD52">
-    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.4.1" src="https://img.shields.io/badge/Release-2.4.1-2ea44f"></a>
+    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.4.2-beta.1" src="https://img.shields.io/badge/Release-2.4.2--beta.1-orange"></a>
   </p>
   <p>
     <a href="./README.md">简体中文</a> · <a href="./README_EN.md">English</a> · <a href="./README_JP.md">日本語</a>
@@ -14,6 +14,13 @@
 </div>
 
 ---
+
+## 2.4.2-beta.1 の変更点
+
+- テンプレートと前処理結果をキャッシュし、複数状態の確認で同じフレームを共有します。通常ポーリング、クリック後待機、一覧スクロールも短縮しました。
+- Link Raid は参加人数が `9/10`、`10/10`、または人数を確実に判定できない backup requests をスキップします。満員または終了済みの部屋は閉じて再検索します。
+- `tap_to_countinue_1/2` から文字前景を抽出して動的背景を無視し、結果画面の確認後は解像度に応じてスケーリングした画面下中央の安全位置だけをクリックします。
+- 復旧クリック直前に次画面を再確認し、読み込み中の画面遷移をクリックで通り過ぎないようにしました。
 
 ## ダウンロードと起動
 
