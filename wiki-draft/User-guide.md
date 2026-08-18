@@ -46,7 +46,7 @@ Leave the game on the main/Lighthouse screen. Do not enter backup requests first
 
 If the selected level is missing or cannot be clicked safely, the bot refreshes and searches again without joining another level. At the same candidate position, level recognition compares every supported level and independently scores the central level-number region. A click occurs only when both classifiers choose the requested level. Candidates at `9/10`, `10/10`, or with an unreadable participant count are skipped safely. A full or already-ended room is dismissed and rematched.
 
-The result screen is confirmed only from the text foreground of `tap_to_countinue_1/2`; medal graphics are not required, and the animated background is ignored. The bot then clicks a resolution-scaled safe position at the bottom center and starts the like flow after `back` is recognized. Clicking `joined_battles` does not trigger likes by itself.
+The result screen is confirmed only from locally adaptive text outlines of `tap_to_countinue_1/2`; medal graphics are not required, and the animated background is ignored. Every click requires three-frame confirmation. If the first click does not advance and the text remains, at most one second click is allowed. The bot accepts `back` and starts likes only after at least one confirmed click. After scrolling the likes list, it moves the pointer away, waits for the page to settle, and retries recognition for three seconds. Clicking `joined_battles` does not trigger likes by itself.
 
 ## Crystalis
 
@@ -83,7 +83,7 @@ Template naming, the `aim` junction, scaling recipes, and integrity validation a
 - Recognition captures only the game client area, excluding the title bar and borders.
 - Every numbered variant in a template group is compared against one shared frame; only the highest-scoring candidate is used.
 - Before a template click, three samples are taken over 0.6 seconds. All three must exceed the threshold and remain at nearby centers.
-- `tap_to_countinue` is a fixed-position action: after three text-foreground matches from `_1/2`, it clicks the safe bottom-center position once and never uses the detected template location.
+- `tap_to_countinue` is a fixed-position action: after three text-outline matches from `_1/2`, it clicks the safe bottom-center position. If the page remains and another three-frame confirmation succeeds, one second click is allowed. The detected template location is never clicked, and no next-step template is accepted before the first confirmed click.
 - A normal screen times out after 60 seconds and battle waiting after 30 minutes.
 - Keyboard input or large mouse movement pauses automation; it resumes after five seconds without user input.
 - Every five-second miss while waiting for a clickable template triggers a two-second client observation. More than 50% changed pixels is treated as battle animation and skips recovery. On a stable image, the next step is checked again before any recovery click at the last safe automation position.

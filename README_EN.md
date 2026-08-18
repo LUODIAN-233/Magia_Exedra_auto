@@ -6,7 +6,7 @@
     <img alt="Platform" src="https://img.shields.io/badge/Platform-Windows-0078D4">
     <img alt="Architecture" src="https://img.shields.io/badge/Architecture-x86--64-555555">
     <img alt="GUI" src="https://img.shields.io/badge/GUI-PySide6-41CD52">
-    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.4.2-beta.1" src="https://img.shields.io/badge/Release-2.4.2--beta.1-orange"></a>
+    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.4.2" src="https://img.shields.io/badge/Release-2.4.2-2ea44f"></a>
   </p>
   <p>
     <a href="./README.md">简体中文</a> · <a href="./README_EN.md">English</a> · <a href="./README_JP.md">日本語</a>
@@ -15,12 +15,13 @@
 
 ---
 
-## 2.4.2-beta.1 changes
+## 2.4.2 changes
 
 - Caches templates and preprocessing, shares one frame across grouped state checks, and shortens normal polling, post-click waits, and list scrolling.
 - Link Raid skips backup requests at `9/10`, `10/10`, or with an unreadable participant count. Full or already-ended rooms are dismissed and rematched.
-- Result recognition extracts the text foreground from `tap_to_countinue_1/2` and ignores the animated background, then clicks only a resolution-scaled safe position at the bottom center.
-- The next-step screen is checked again immediately before a recovery click so a delayed transition is not clicked past.
+- Result recognition uses locally adaptive text outlines from `tap_to_countinue_1/2` across 720p, 1080p, 2K, and 4K. Each three-frame confirmation permits at most two clicks at the safe bottom-center position.
+- Fixed-position actions accept `back` only after the current screen was genuinely recognized and clicked, preventing battle-screen false positives from advancing into likes.
+- After scrolling the likes list, the pointer is moved away, the page is allowed to settle, and recognition is retried for three seconds while retaining the strict nine-like limit.
 
 ## Download and launch
 

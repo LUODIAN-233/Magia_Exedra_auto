@@ -6,7 +6,7 @@
     <img alt="Platform" src="https://img.shields.io/badge/平台-Windows-0078D4">
     <img alt="Architecture" src="https://img.shields.io/badge/架构-x86--64-555555">
     <img alt="GUI" src="https://img.shields.io/badge/界面-PySide6-41CD52">
-    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.4.2-beta.1" src="https://img.shields.io/badge/Release-2.4.2--beta.1-orange"></a>
+    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.4.2" src="https://img.shields.io/badge/Release-2.4.2-2ea44f"></a>
   </p>
   <p>
     <a href="./README.md">简体中文</a> · <a href="./README_EN.md">English</a> · <a href="./README_JP.md">日本語</a>
@@ -15,12 +15,13 @@
 
 ---
 
-## 2.4.2-beta.1 更新
+## 2.4.2 更新
 
 - 缓存模板与预处理结果，多组状态识别共用同一帧，并缩短普通轮询、点击后等待和列表滚动耗时。
 - Link Raid 会跳过参加人数为 `9/10`、`10/10` 或人数无法可靠确认的求援房间；房间已满或战斗已结束时关闭提示并重新匹配。
-- 结算页从 `tap_to_countinue_1/2` 提取文字前景进行识别，忽略动态背景；确认后只点击按分辨率缩放的底部中央安全位置。
-- 恢复点击前会再次检查下一步页面，避免加载期间的原地点击把流程提前点过。
+- 结算页使用局部自适应文字轮廓识别 `tap_to_countinue_1/2`，兼容 720p、1080p、2K 与 4K；每次三帧确认后在底部中央安全位置最多点击两次。
+- 固定坐标动作只有真实识别并点击当前页面后才接受 `back`，避免战斗画面误报导致流程提前进入点赞。
+- 点赞列表滑动后会移开鼠标、等待页面稳定并在三秒内重试识别，同时仍严格限制最多点赞九次。
 
 ## 下载与启动
 
