@@ -6,7 +6,7 @@
     <img alt="Platform" src="https://img.shields.io/badge/Platform-Windows-0078D4">
     <img alt="Architecture" src="https://img.shields.io/badge/Architecture-x86--64-555555">
     <img alt="GUI" src="https://img.shields.io/badge/GUI-PySide6-41CD52">
-    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.4.2" src="https://img.shields.io/badge/Release-2.4.2-2ea44f"></a>
+    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.4.3" src="https://img.shields.io/badge/Release-2.4.3-2ea44f"></a>
   </p>
   <p>
     <a href="./README.md">简体中文</a> · <a href="./README_EN.md">English</a> · <a href="./README_JP.md">日本語</a>
@@ -15,13 +15,11 @@
 
 ---
 
-## 2.4.2 changes
+## 2.4.3 changes
 
-- Caches templates and preprocessing, shares one frame across grouped state checks, and shortens normal polling, post-click waits, and list scrolling.
-- Link Raid skips backup requests at `9/10`, `10/10`, or with an unreadable participant count. Full or already-ended rooms are dismissed and rematched.
-- Result recognition uses locally adaptive text outlines from `tap_to_countinue_1/2` across 720p, 1080p, 2K, and 4K. Each three-frame confirmation permits at most two clicks at the safe bottom-center position.
-- Fixed-position actions accept `back` only after the current screen was genuinely recognized and clicked, preventing battle-screen false positives from advancing into likes.
-- After scrolling the likes list, the pointer is moved away, the page is allowed to settle, and recognition is retried for three seconds while retaining the strict nine-like limit.
+- Frozen builds finish the automatic update check before template scaling starts. Accepting an update is no longer blocked by scaling, while a cancelled or failed download resumes scaling.
+- After Link Raid clicks `play`, delayed `already_end` dialogs are checked throughout the battle wait. The dialog is dismissed and rematched only when its full message and matching `OK` are both present in the central region for three consecutive frames; a single-frame false positive cannot click a generic `OK`.
+- When the first level scan misses, the list is rescanned before at most one downward scroll and a final scan. At least 4.5 seconds separate the actual refresh click from the next automation input, with recognition and processing time included.
 
 ## Download and launch
 

@@ -51,6 +51,7 @@ main.py -> src/update/update_check
 - New builds use PyInstaller `--windowed` and no longer show an empty companion console; compatibility with old console-mode builds hides an existing console
 - `closeEvent()` uses one shared 12-second deadline to stop/wait for workers, scaling, update checks, and update preparation
 - Update signals include a task ID so stale thread results are ignored
+- Frozen startup completes the automatic update check before template scaling; accepting an update keeps scaling deferred, while cancellation or failure resumes it
 - Source-mode automatic checks log the Release URL; only manual checks open it
 
 `main.py` does not contain Link Raid or Crystalis flow logic.
@@ -77,7 +78,7 @@ Each run starts a `UserActivityGuard`. Keyboard input or cumulative large mouse 
 
 ### link_raid.py
 
-Link Raid flow: navigation, backup requests, refresh, joined-battle cleanup, level selection, join/LP handling, battle completion, likes, and return. Level selection compares every supported level and the central number region at the selected candidate. Candidates at 9/10, 10/10, or with an unreadable participant count are skipped; full and already-ended join results are dismissed and rematched. `tap_to_countinue` confirms the result screen only from `_1/2` text outlines, clicks a scaled safe bottom-center coordinate, and permits one renewed confirmation and second click if the page remains. Likes start after `back` appears; after a list scroll, the pointer moves away and recognition retries briefly. It supports LV4 and LV6-LV12, never substitutes another level, and uses scaled 2K-baseline coordinates for navigation and scrolling.
+Link Raid flow: navigation, backup requests, refresh, joined-battle cleanup, level selection, join/LP handling, battle completion, likes, and return. Level selection compares every supported level and the central number region at the selected candidate. A miss is rescanned before at most one downward scroll and final scan; at least 4.5 seconds separate an actual refresh click from the next automation input, including recognition time. Candidates at 9/10, 10/10, or with an unreadable participant count are skipped; full and already-ended join results are dismissed and rematched. After `play`, one state loop checks delayed `already_end` and normal results every 0.5 seconds. A generic `OK` is clicked once only when it and the full dialog message match together in the central region for three consecutive frames. `tap_to_countinue` confirms the result screen only from `_1/2` text outlines, clicks a scaled safe bottom-center coordinate, and permits one renewed confirmation and second click if the page remains. Likes start after `back` appears; after a list scroll, the pointer moves away and recognition retries briefly. It supports LV4 and LV6-LV12, never substitutes another level, and uses scaled 2K-baseline coordinates for navigation and scrolling.
 
 ### crystalis.py
 
@@ -91,7 +92,7 @@ Collects contiguous numbered template variants, compares a group against one sha
 
 ### click_behavior.py
 
-Window lookup/focus, visible game-window capture, OpenCV matching, client-only motion sampling, and mouse action. Template reads, Gaussian blur, and text-foreground masks are cached by file signature, while one screenshot can serve multiple groups. Normal matching applies the same 3x3 Gaussian blur to screenshot and templates. Text mode uses locally adaptive screen binarization and an Otsu template mask, applies the same 7x7 Gaussian blur to both outlines, and constrains `TM_SQDIFF_NORMED` with three pixels of negative space to tolerate resolution rasterization without accepting plain bright areas. Recognition and recovery sampling use only the game client, which must remain visible and unobstructed.
+Window lookup/focus, visible game-window capture, OpenCV matching, client-only motion sampling, and mouse action. Template reads, Gaussian blur, and text-foreground masks are cached by file signature, while one screenshot can serve multiple groups. Normal matching applies the same 3x3 Gaussian blur to screenshot and templates. Text mode uses locally adaptive screen binarization and an Otsu template mask, applies the same 7x7 Gaussian blur to both outlines, and constrains `TM_SQDIFF_NORMED` with three pixels of negative space to tolerate resolution rasterization without accepting plain bright areas. Mouse clicks record a monotonic timestamp, and worker-scheduled earliest-input deadlines are checked immediately before the next mouse input so recognition and processing time naturally count toward the interval. Recognition and recovery sampling use only the game client, which must remain visible and unobstructed.
 
 ### template_confidence.py
 

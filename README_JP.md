@@ -6,7 +6,7 @@
     <img alt="Platform" src="https://img.shields.io/badge/プラットフォーム-Windows-0078D4">
     <img alt="Architecture" src="https://img.shields.io/badge/アーキテクチャ-x86--64-555555">
     <img alt="GUI" src="https://img.shields.io/badge/GUI-PySide6-41CD52">
-    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.4.2" src="https://img.shields.io/badge/Release-2.4.2-2ea44f"></a>
+    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.4.3" src="https://img.shields.io/badge/Release-2.4.3-2ea44f"></a>
   </p>
   <p>
     <a href="./README.md">简体中文</a> · <a href="./README_EN.md">English</a> · <a href="./README_JP.md">日本語</a>
@@ -15,13 +15,11 @@
 
 ---
 
-## 2.4.2 の変更点
+## 2.4.3 の変更点
 
-- テンプレートと前処理結果をキャッシュし、複数状態の確認で同じフレームを共有します。通常ポーリング、クリック後待機、一覧スクロールも短縮しました。
-- Link Raid は参加人数が `9/10`、`10/10`、または人数を確実に判定できない backup requests をスキップします。満員または終了済みの部屋は閉じて再検索します。
-- `tap_to_countinue_1/2` を局所適応型の文字輪郭で認識し、720p、1080p、2K、4K に対応します。3フレーム確認ごとに画面下中央の安全位置を最大2回クリックします。
-- 固定座標アクションは現在画面を実際に認識してクリックした後だけ `back` を受け入れ、戦闘画面の誤検出でいいね処理へ進むことを防ぎます。
-- いいね一覧をスクロールした後はポインターを退避し、画面の安定を待って3秒間再認識します。最大9回の制限は維持されます。
+- EXE 起動時は自動更新チェックを完了してからテンプレートのスケーリングを開始します。更新の承認がスケーリングに阻止されず、ダウンロードのキャンセルまたは失敗後はスケーリングを再開します。
+- Link Raid で `play` をクリックした後、戦闘待機中は遅れて表示される `already_end` を継続して確認します。中央領域で完全なメッセージと対応する `OK` が3フレーム連続して同時に一致した場合だけ1回クリックして再検索し、1フレームだけの誤検出では汎用 `OK` をクリックしません。
+- 最初のレベル検索で見つからない場合は、もう一度検索してから下方向へのスクロールを最大1回だけ行い、最後に再検索します。更新ボタンを実際にクリックしてから次の自動入力まで最低4.5秒を確保し、その間の認識と処理時間も含めます。
 
 ## ダウンロードと起動
 

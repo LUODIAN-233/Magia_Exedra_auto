@@ -19,7 +19,7 @@ Release builds do not open an extra console. Runtime messages appear in the GUI,
 - The game window title must be `MadokaExedra`.
 - Keep the game visible and do not cover recognition areas with other windows.
 - Select the correct game language before choosing a mode and its options.
-- The template list is refreshed at startup; initial multi-resolution generation may take some time.
+- Frozen builds check for updates before refreshing the template list; initial multi-resolution generation may take some time.
 - Resolution is selected automatically from the game client area.
 
 You can adjust language while the template status reports that the game is not detected, but the game must be running before automation starts. Unknown resolution, unavailable matching packs, or missing required templates block startup.
@@ -44,9 +44,9 @@ Leave the game on the main/Lighthouse screen. Do not enter backup requests first
 5. Handle available likes after normal results or finished-battle cleanup.
 6. Return to backup requests and repeat.
 
-If the selected level is missing or cannot be clicked safely, the bot refreshes and searches again without joining another level. At the same candidate position, level recognition compares every supported level and independently scores the central level-number region. A click occurs only when both classifiers choose the requested level. Candidates at `9/10`, `10/10`, or with an unreadable participant count are skipped safely. A full or already-ended room is dismissed and rematched.
+If the selected level is missing or cannot be clicked safely, the bot refreshes and searches again without joining another level. At the same candidate position, level recognition compares every supported level and independently scores the central level-number region. A click occurs only when both classifiers choose the requested level. When the initial scan finds neither the level nor `no_lv`, the list is rescanned before at most one downward scroll and a final scan. At least 4.5 seconds separate the actual refresh click from the next automation input, with recognition and processing time included. Candidates at `9/10`, `10/10`, or with an unreadable participant count are skipped safely. A full or already-ended room is dismissed and rematched.
 
-The result screen is confirmed only from locally adaptive text outlines of `tap_to_countinue_1/2`; medal graphics are not required, and the animated background is ignored. Every click requires three-frame confirmation. If the first click does not advance and the text remains, at most one second click is allowed. The bot accepts `back` and starts likes only after at least one confirmed click. After scrolling the likes list, it moves the pointer away, waits for the page to settle, and retries recognition for three seconds. Clicking `joined_battles` does not trigger likes by itself.
+After `play`, the full battle wait checks both delayed `already_end` dialogs and normal result states. A delayed dialog is dismissed and rematched only when its full message and corresponding `OK` are both present in the central dialog region for three consecutive frames; a one-frame false positive or disappearing dialog cannot click a generic `OK` on another page. The result screen is confirmed only from locally adaptive text outlines of `tap_to_countinue_1/2`; medal graphics are not required, and the animated background is ignored. Every click requires three-frame confirmation. If the first click does not advance and the text remains, at most one second click is allowed. The bot accepts `back` and starts likes only after at least one confirmed click. After scrolling the likes list, it moves the pointer away, waits for the page to settle, and retries recognition for three seconds. Clicking `joined_battles` does not trigger likes by itself.
 
 ## Crystalis
 
