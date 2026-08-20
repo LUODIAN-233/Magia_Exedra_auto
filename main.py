@@ -376,6 +376,7 @@ class mywindow(QWidget):
         self._closing = False
         self._update_manual = False
         self._initial_layout_sized = False
+        self._startup_update_check_pending = True
         self._startup_template_refresh_pending = False
         self._log_scroll_pending = False
         self._gui_log_folder = ConsecutiveLogFolder()
@@ -499,8 +500,7 @@ class mywindow(QWidget):
         self.mainlayout.activate()
         self.resize(560, 820)
 
-        #先增量生成派生模板，再检测游戏，避免全新安装时对应分辨率仍为空。
-        QTimer.singleShot(0, self._refresh_templates_at_startup)
+        #先完成自动更新检查；没有进入更新安装时，再增量生成派生模板并检测游戏。
         self._check_update_async()
 
     def _apply_style(self):
@@ -671,6 +671,7 @@ class mywindow(QWidget):
         self._refresh_control_state()
         if not isinstance(r, dict):
             self._append_log(str(r), level='ERROR', source='更新')
+            self._continue_startup_after_update()
             return
         message = r.get('message', '')
         error_prefixes = ('查询更新失败：', '检查更新出错：', '本地版本号无法解析：')
@@ -678,6 +679,7 @@ class mywindow(QWidget):
         self._append_log(message, level=level, source='更新')
         if r.get('has_update'):
             self._offer_update(r)
+        self._continue_startup_after_update()
 
     def _local_version_disp(self):
         from src.update.update_check import VERSION
@@ -828,6 +830,7 @@ class mywindow(QWidget):
             level='WARNING' if cancelled else 'ERROR', source='更新',
         )
         self._reset_update_state(cleanup=False)
+        self._continue_startup_after_update()
 
     def _on_update_cancel(self):
         if self._update_state not in ('downloading', 'extracting'):
@@ -1081,6 +1084,14 @@ class mywindow(QWidget):
     def _update_busy(self):
         return self._update_state in ('downloading', 'extracting', 'ready', 'closing')
 
+    def _continue_startup_after_update(self):
+        #启动缩放必须让自动更新优先；接受更新后保持等待，失败或取消才继续。
+        if not self._startup_update_check_pending or self._closing \
+                or self._update_state != 'idle':
+            return
+        self._startup_update_check_pending = False
+        QTimer.singleShot(0, self._refresh_templates_at_startup)
+
     def _refresh_templates_at_startup(self):
         if self._closing:
             return
@@ -1088,6 +1099,7 @@ class mywindow(QWidget):
         if not self.lang_switcher.refresh_packs():
             self._startup_template_refresh_pending = False
             self._detect_game_at_startup()
+            self._refresh_control_state()
 
     def _detect_game_at_startup(self):
         if self._closing:
@@ -1128,7 +1140,9 @@ class mywindow(QWidget):
             return
         automation_busy = self._automation_running()
         update_busy = self._update_busy()
-        controls_enabled = not automation_busy and not update_busy and not self._closing
+        startup_busy = self._startup_update_check_pending
+        controls_enabled = not automation_busy and not update_busy \
+            and not startup_busy and not self._closing
         self.scriptTitle.setEnabled(controls_enabled)
         self.scriptCombo.setEnabled(controls_enabled)
         self.startButton.setEnabled(controls_enabled and bool(self._entries))
@@ -1181,6 +1195,7 @@ class mywindow(QWidget):
                 self._append_log(f'启动更新安装器失败：{e}', level='ERROR', source='更新')
                 self._closing = False
                 self._reset_update_state(cleanup=True)
+                self._continue_startup_after_update()
                 event.ignore()
                 return
         else:

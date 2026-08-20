@@ -40,6 +40,34 @@ def _record_automation_position(callback, position):
         )
 
 
+def _record_automation_click(callback):
+    worker = _worker_from_callback(callback)
+    if worker is not None:
+        worker._last_automation_click_at = time.monotonic()
+
+
+def wait_for_automation_input_deadline(callback):
+    """等待工作线程设置的最早输入时间；此前的识别耗时自然计入间隔。"""
+    worker = _worker_from_callback(callback)
+    if worker is None:
+        return True
+    deadline = float(getattr(worker, '_next_automation_input_at', 0.0) or 0.0)
+    while deadline > 0:
+        if callback is not None and not callback():
+            return False
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            worker._next_automation_input_at = 0.0
+            return True
+        wait = getattr(worker, '_wait', None)
+        if wait is not None:
+            if wait(remaining):
+                return False
+        else:
+            time.sleep(remaining)
+    return True
+
+
 def _capture_region(region):
     try:
         screenshot = pyautogui.screenshot(region=region)
@@ -547,6 +575,10 @@ def click_auto(var_avg, can_click=None):
     try:
         if not _wait_for_user(can_click):
             return 1
+        if not wait_for_automation_input_deadline(can_click):
+            return 1
+        if not _wait_for_user(can_click):
+            return 1
         with _automation_input(can_click):
             pyautogui.moveTo(var_avg[0], var_avg[1])
             time.sleep(0.1) #等待一会
@@ -554,6 +586,7 @@ def click_auto(var_avg, can_click=None):
                 logger.debug('任务已停止，取消点击')
                 return 1
             pyautogui.click(var_avg[0], var_avg[1], button='left')
+            _record_automation_click(can_click)
             _record_automation_position(can_click, var_avg)
     except Exception as e:
         logger.warning('鼠标点击失败: %s', e)
