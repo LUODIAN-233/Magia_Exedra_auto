@@ -202,6 +202,58 @@ def click_item_with_result(self, picture, name, search_region=None):
     return result
 
 
+def click_contextual_item_with_result(self, context_picture, context_name,
+                                      picture, name, search_region=None):
+    """仅在上下文和目标同帧稳定存在时点击目标，避免通用按钮跨页面误识别。"""
+    context_files = _template_files(context_picture)
+    target_files = _template_files(picture)
+    can_click = getattr(self, '_running', None)
+    selection = _template_selection(self)
+    if can_click is not None and not can_click():
+        return 1
+    if not context_files or not target_files or not _wait_for_user(can_click):
+        return 1
+
+    def detect_once():
+        return click_behavior.best_template_matches(
+            (context_files, target_files), search_region=search_region,
+        )
+
+    def accepted(detections):
+        return len(detections) == 2 \
+            and _template_match_accepted(detections[0], selection) \
+            and _template_match_accepted(detections[1], selection)
+
+    confirmed = _confirm_stable_detection(
+        self,
+        detect_once,
+        accepted,
+        lambda detections: detections[1][0] if len(detections) == 2 else None,
+        f'{context_name}+{name}',
+    )
+    if confirmed is None:
+        logger.debug('%s上下文中的%s未通过0.6秒三次同帧稳定性确认',
+                     context_name, name)
+        return 1
+    detections, click_point = confirmed
+    context_detected, target_detected = detections
+    _context_point, context_score, context_path = context_detected
+    _target_point, target_score, target_path = target_detected
+    context_threshold = template_confidence.threshold_for(context_path, selection)
+    target_threshold = template_confidence.threshold_for(target_path, selection)
+    result = click_behavior.click_auto(click_point, can_click)
+    if result == 2:
+        _emit_template_click(
+            self,
+            f'已在{context_name}上下文中点击模板 {name}（{target_path}），'
+            f'上下文 {context_path} {context_score:.4f}/{context_threshold:.4f}，'
+            f'目标 {target_score:.4f}/{target_threshold:.4f}',
+        )
+        if _wait(self, POST_CLICK_DELAY):
+            return 1
+    return result
+
+
 def click_fixed_position_for_item_with_result(self, picture, name, x_2k, y_2k,
                                               search_region=None,
                                               foreground_variants=None):
@@ -393,6 +445,10 @@ def click_position(move_lelt, move_top, can_click=None):
     if not (0 <= move_lelt < width and 0 <= move_top < height):
         logger.warning('点击坐标超出游戏客户区: (%s, %s)，客户区大小 %sx%s', move_lelt, move_top, width, height)
         return 1
+    if not click_behavior.wait_for_automation_input_deadline(can_click):
+        return 1
+    if not _wait_for_user(can_click):
+        return 1
     try:
         time.sleep(0.1)
         if can_click is not None and not can_click():
@@ -403,6 +459,7 @@ def click_position(move_lelt, move_top, can_click=None):
             if can_click is not None and not can_click():
                 return 1
             pyautogui.click(left + move_lelt, top + move_top, button='left')
+            click_behavior._record_automation_click(can_click)
             _record_automation_position(can_click, (left + move_lelt, top + move_top))
         time.sleep(0.1)
     except Exception as e:
@@ -424,6 +481,10 @@ def move_position(move_lelt, move_top, can_move=None):
     if not (0 <= move_lelt < width and 0 <= move_top < height):
         logger.warning('移动坐标超出游戏客户区: (%s, %s)，客户区大小 %sx%s',
                        move_lelt, move_top, width, height)
+        return 1
+    if not click_behavior.wait_for_automation_input_deadline(can_move):
+        return 1
+    if not _wait_for_user(can_move):
         return 1
     try:
         with _automation_input(can_move):
@@ -449,6 +510,10 @@ def move_a_to_b(move_lelt_a, move_top_a, move_lelt_b, move_top_b, can_move=None)
     points = ((move_lelt_a, move_top_a), (move_lelt_b, move_top_b))
     if any(not (0 <= x < width and 0 <= y < height) for x, y in points):
         logger.warning('拖拽坐标超出游戏客户区: %s，客户区大小 %sx%s', points, width, height)
+        return 1
+    if not click_behavior.wait_for_automation_input_deadline(can_move):
+        return 1
+    if not _wait_for_user(can_move):
         return 1
     try:
         time.sleep(0.1)

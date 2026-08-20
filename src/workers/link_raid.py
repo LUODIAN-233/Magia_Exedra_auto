@@ -18,6 +18,7 @@ from .registry import register, ParamSpec
 logger = logging.getLogger(__name__)
 
 LEVEL_LIST_SEARCH_REGION = (0.20, 0.18, 0.70, 0.78)
+JOIN_DIALOG_SEARCH_REGION = (0.20, 0.20, 0.80, 0.85)
 SCROLL_SETTLE_DELAY = 1.0
 TAP_TO_CONTINUE_POSITION_2K = (1280, 1367)
 TAP_TO_CONTINUE_FOREGROUND_VARIANTS = (1, 2)
@@ -25,6 +26,8 @@ TAP_TO_CONTINUE_MAX_CLICKS = 2
 LIKE_SCROLL_SETTLE_DELAY = 1.0
 LIKE_RETRY_TIMEOUT = 3.0
 LIKE_NEUTRAL_MOUSE_POSITION_2K = (1280, 120)
+BATTLE_STATE_POLL_INTERVAL = 0.5
+REFRESH_MIN_CLICK_INTERVAL = 4.5
 
 
 @register(
@@ -86,6 +89,7 @@ class LinkRaidWorker(BaseWorker):
         self.level_choice = level
         #喝体力药次数，存储的是“显示次数+1”，1 表示不喝药；GUI 启动前会重新赋值
         self.lp_recover_times = lp_recover_times
+        self._next_automation_input_at = 0.0
 
     def run(self):
         self._run_safely(self._run)
@@ -111,6 +115,7 @@ class LinkRaidWorker(BaseWorker):
         self.win_exist = 1
         # 点击 play 之后战斗已经结束，1 代表没结束，2 代表战斗已经结束
         self.already_end = 1
+        self._next_automation_input_at = 0.0
         self.signal.emit(str('具体挂机参数为：'))
         self.signal.emit(str(f'选择的等级是：{self.level_choice}'))
         self.signal.emit(str(f'喝体力药的次数是：{self.LP_full_add - 1}'))
@@ -131,10 +136,7 @@ class LinkRaidWorker(BaseWorker):
             self.join_battle()
             if not self._running():
                 break
-            # 判断是否结束，重新点击后会直接再次加入战斗，函数都在里面写了，不需要重新运行上面的
-            self.check_already_end()
-            if not self._running():
-                break
+            # 同时等待迟到的 already_end 和正常结算，避免一次性检查漏掉延迟弹窗。
             self.battle_and_finish()
 
     # 函数
@@ -232,10 +234,7 @@ class LinkRaidWorker(BaseWorker):
                     return
                 result = 1
 
-                # 点击刷新
-                result = self._click_until('./aim/quests/link_raid/backup_requests/refresh', 'refresh')
-                if result == 2:
-                    self.signal.emit(str('refresh点击完成'))
+                result = self._refresh_battle_list()
 
         if self._running() and self.win_exist == 1:
             self._emit_log('等待已结束战斗超时，已安全停止。', 'ERROR')
@@ -310,20 +309,25 @@ class LinkRaidWorker(BaseWorker):
                 self.signal.emit(str('第二层的backup_requests点击完成'))
             result = 1
 
-            # 点击刷新
-            result = self._click_until('./aim/quests/link_raid/backup_requests/refresh', 'refresh')
-            if result == 2:
-                self.signal.emit(str('refresh点击完成'))
+            result = self._refresh_battle_list()
             result = 1
+
+    def _refresh_battle_list(self):
+        """刷新列表，并以实际点击时刻限制下一次自动化输入。"""
+        previous_click_at = getattr(self, '_last_automation_click_at', None)
+        result = self._click_until('./aim/quests/link_raid/backup_requests/refresh', 'refresh')
+        if result == 2:
+            clicked_at = getattr(self, '_last_automation_click_at', None)
+            if clicked_at is None or clicked_at == previous_click_at:
+                # 测试替身或兼容旧输入实现时使用安全回退；正常路径取鼠标点击实时时间。
+                clicked_at = time.monotonic()
+            self._next_automation_input_at = clicked_at + REFRESH_MIN_CLICK_INTERVAL
+            self.signal.emit(str('refresh点击完成'))
+        return result
 
     # 打架之前点击刷新
     def prepare_battle(self):
-        result = 1
-
-        # 点击刷新
-        result = self._click_until('./aim/quests/link_raid/backup_requests/refresh', 'refresh')
-        if result == 2:
-            self.signal.emit(str('refresh点击完成'))
+        self._refresh_battle_list()
 
     def prepare_matching_battle(self):
         # 刷新前：先查一次目标等级
@@ -388,20 +392,23 @@ class LinkRaidWorker(BaseWorker):
         self.signal.emit(str(f'未找到 lv{self.level_choice} 且未发现 no_lv，将下拉查找'))
         return 0
 
-    # 下拉查找目标等级：最多下拉 3 次，每次查找 lv 和 no_lv。
-    # 返回：2=找到并点击，1=发现 no_lv 或下拉耗尽（需刷新）
+    # 下拉前先额外复扫一次；仍未找到时只下拉一次并进行最后扫描。
+    # 返回：2=找到并点击，1=发现 no_lv 或单次下拉后仍未找到（需刷新）
     def _find_lv_by_scroll(self):
-        for _ in range(3):
-            if not self._running():
-                return 1
-            click_action.move_a_to_b_scaled(1400, 1200, 1400, 400, self._running)
-            if self._wait(SCROLL_SETTLE_DELAY):
-                return 1
-            self.signal.emit(str(f'下拉完成，继续查找 lv{self.level_choice}'))
-            r = self._scan_lv()
-            if r != 0:
-                return r
-        self.signal.emit(str(f'下拉 3 次仍未找到 lv{self.level_choice} 或 no_lv，将刷新救援列表'))
+        r = self._scan_lv()
+        if r != 0 or not self._running():
+            return 1 if not self._running() else r
+        self.signal.emit(str(f'复扫仍未找到 lv{self.level_choice} 或 no_lv，执行一次下拉'))
+        moved = click_action.move_a_to_b_scaled(
+            1400, 1200, 1400, 400, self._running,
+        )
+        if moved != 2 or self._wait(SCROLL_SETTLE_DELAY):
+            return 1
+        self.signal.emit(str(f'下拉完成，最后查找一次 lv{self.level_choice}'))
+        r = self._scan_lv()
+        if r != 0:
+            return r
+        self.signal.emit(str(f'单次下拉后仍未找到 lv{self.level_choice} 或 no_lv，将刷新救援列表'))
         return 1
 
     def join_battle(self):
@@ -446,9 +453,18 @@ class LinkRaidWorker(BaseWorker):
             else:
                 self.signal.emit(str('点击 join 后战斗已结束，点 ok 后重新匹配加入'))
                 ok_picture = './aim/quests/link_raid/backup_requests/join/ok'
-            result = self._click_until(ok_picture, 'ok')
-            if result == 2:
-                self.signal.emit(str('ok点击完成'))
+            result = click_action.click_contextual_item_with_result(
+                self,
+                f'./aim/quests/link_raid/backup_requests/join/full/{recovery_name}',
+                recovery_name,
+                ok_picture,
+                'ok',
+                search_region=JOIN_DIALOG_SEARCH_REGION,
+            )
+            if result != 2:
+                # 单帧误报或弹窗正在变化时不寻找通用 OK，重新确认完整弹窗。
+                continue
+            self.signal.emit(str('ok点击完成'))
             result = 1
             if not self.prepare_matching_battle():
                 return
@@ -488,53 +504,119 @@ class LinkRaidWorker(BaseWorker):
             self.signal.emit(str('play点击完成'))
         result = 1
 
-    def check_already_end(self):
-        # 防止延迟问题
-        if self._wait(0.9):
-            return
+    def _wait_battle_outcome(self):
+        """持续等待迟到的已结束弹窗，或确认并推进正常结算页。"""
+        deadline = time.monotonic() + BATTLE_TIMEOUT
+        tap_click_count = 0
+        already_end_step = (
+            './aim/quests/link_raid/backup_requests/join/full/already_end',
+            'already_end',
+        )
+        back_step = (
+            './aim/quests/link_raid/backup_requests/battle/back',
+            'back',
+        )
+        tap_step = (
+            './aim/quests/link_raid/backup_requests/battle/tap_to_countinue',
+            'tap_to_countinue',
+            {'foreground_variants': TAP_TO_CONTINUE_FOREGROUND_VARIANTS},
+        )
+        while self._running() and time.monotonic() < deadline:
+            # 第一次真实 Tap 点击前不检查 back；迟到的 already_end 始终优先。
+            states = [already_end_step]
+            if tap_click_count:
+                states.append(back_step)
+            if tap_click_count < TAP_TO_CONTINUE_MAX_CLICKS:
+                states.append(tap_step)
+            outcome = click_action.find_first_item_with_result(self, tuple(states))
+            if outcome is not None:
+                _picture, state_name = outcome
+                if state_name == 'already_end':
+                    result = click_action.click_contextual_item_with_result(
+                        self,
+                        already_end_step[0],
+                        already_end_step[1],
+                        './aim/quests/link_raid/backup_requests/join/ok',
+                        'ok',
+                        search_region=JOIN_DIALOG_SEARCH_REGION,
+                    )
+                    if result == 2:
+                        self.signal.emit(
+                            'play 后稳定确认延迟出现的 already_end，'
+                            '已单次点击其弹窗 OK，准备重新匹配'
+                        )
+                        return 'already_end'
+                    # 单帧误报不能阻塞真实结算；本轮忽略 already_end 后继续检查其它状态。
+                    fallback_states = tuple(
+                        state for state in states if state[1] != 'already_end'
+                    )
+                    outcome = click_action.find_first_item_with_result(
+                        self, fallback_states,
+                    ) if fallback_states else None
+                    if outcome is None:
+                        if self._wait(min(
+                                BATTLE_STATE_POLL_INTERVAL,
+                                max(0, deadline - time.monotonic()),
+                        )):
+                            return None
+                        continue
+                    _picture, state_name = outcome
+                if state_name == 'back' and tap_click_count:
+                    self.signal.emit('已检测到下一步back，确认tap_to_countinue页面已经推进。')
+                    return 'finished'
+                if state_name == 'tap_to_countinue' \
+                        and tap_click_count < TAP_TO_CONTINUE_MAX_CLICKS:
+                    result = click_action.click_fixed_position_for_item_with_result(
+                        self,
+                        './aim/quests/link_raid/backup_requests/battle/tap_to_countinue',
+                        'tap_to_countinue',
+                        *TAP_TO_CONTINUE_POSITION_2K,
+                        foreground_variants=TAP_TO_CONTINUE_FOREGROUND_VARIANTS,
+                    )
+                    if result == 2:
+                        tap_click_count += 1
+                        self.signal.emit(
+                            f'tap_to_countinue已识别并执行第{tap_click_count}/'
+                            f'{TAP_TO_CONTINUE_MAX_CLICKS}次安全点击，正在等待下一步页面出现。'
+                        )
+                        continue
+            if self._wait(min(
+                    BATTLE_STATE_POLL_INTERVAL,
+                    max(0, deadline - time.monotonic()),
+            )):
+                return None
+        if self._running():
+            self._emit_log(
+                f'等待战斗结算或already_end超过{BATTLE_TIMEOUT}秒，已安全停止。'
+                '请检查游戏网络、模板语言和分辨率。',
+                'ERROR',
+            )
+            self._finish()
+        return None
 
-        # 确认战斗是否结束
-        self.already_end = click_action.find_item_with_result(self, f'./aim/quests/link_raid/backup_requests/join/full/already_end', 'already_end')
-        self.signal.emit(str(f'战斗是否已经结束的状态是{self.already_end}，1是没有结束，2是结束了'))
-
-        # 如果战斗已经结束，点击 ok，然后点击刷新
-        while self._running() and self.already_end == 2:
-            result = 1
-            # 点击 ok
-            result = self._click_until('./aim/quests/link_raid/backup_requests/join/ok', 'ok')
-            if result == 2:
-                self.signal.emit(str('ok点击完成'))
-            result = 1
-
-            if not self.prepare_matching_battle():
-                return
-            self.join_battle()
-            if not self._running():
-                return
-
-            # 再次判断，只要脸够黑，就能连着结束
-            self.already_end = click_action.find_item_with_result(self, f'./aim/quests/link_raid/backup_requests/join/full/already_end', 'already_end')
-            self.signal.emit(str(f'战斗是否已经结束的状态是{self.already_end}，1是没有结束，2是结束了'))
+    def _recover_already_ended_battle(self):
+        if not self._running():
+            return False
+        if not self.prepare_matching_battle():
+            return False
+        self.join_battle()
+        return self._running()
 
     # 完成战斗，然后点 back。点击战斗结束会出来的 tap_to_countinue
     def battle_and_finish(self):
-        result = 1
-
-        # 检测模板只用于确认结算页，点击固定的底部中央安全位置。
-        result = self._click_until(
-                './aim/quests/link_raid/backup_requests/battle/tap_to_countinue',
-                'tap_to_countinue',
-                BATTLE_TIMEOUT,
-                next_steps=(('./aim/quests/link_raid/backup_requests/battle/back', 'back'),),
-                fixed_click_2k=TAP_TO_CONTINUE_POSITION_2K,
-                foreground_variants=TAP_TO_CONTINUE_FOREGROUND_VARIANTS,
-                fixed_click_limit=TAP_TO_CONTINUE_MAX_CLICKS,
-            )
-        if result == 2:
-            self.signal.emit(str('tap_to_countinue页面已推进'))
+        while self._running():
+            outcome = self._wait_battle_outcome()
+            if outcome == 'already_end':
+                if not self._recover_already_ended_battle():
+                    return
+                continue
+            if outcome != 'finished':
+                return
+            self.signal.emit('tap_to_countinue页面已推进')
             self.like_battle_result()
-        if not self._running():
-            return
+            if not self._running():
+                return
+            break
 
         # 点击结算界面的 back，点完后回到 boss 打脸的界面
         result = self._click_until('./aim/quests/link_raid/backup_requests/battle/back', 'back')

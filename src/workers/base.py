@@ -56,6 +56,8 @@ class BaseWorker(QThread):
         self._active = False
         self.expected_pack = None
         self._last_automation_position = None
+        self._last_automation_click_at = None
+        self._next_automation_input_at = 0.0
         self._activity_guard = UserActivityGuard(state_callback=self._activity_changed)
 
     def _emit_log(self, message, level='INFO'):
@@ -99,6 +101,8 @@ class BaseWorker(QThread):
         self._stop_event.clear()
         self._active = True
         self._last_automation_position = None
+        self._last_automation_click_at = None
+        self._next_automation_input_at = 0.0
         self._activity_guard.start()
         super().start(priority)
         return True

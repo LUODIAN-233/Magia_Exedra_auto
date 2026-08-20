@@ -5,7 +5,7 @@ import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import Mock, call, patch
+from unittest.mock import ANY, Mock, call, patch
 
 import cv2
 import numpy as np
@@ -635,6 +635,229 @@ class BatchStateDetectionTests(unittest.TestCase):
         self.assertEqual(match_groups.call_args.kwargs['foreground_groups'], [True])
 
 
+class ContextualTemplateActionTests(unittest.TestCase):
+    class Worker:
+        expected_pack = ('EN', '2560x1440')
+
+        def __init__(self):
+            self.logs = []
+
+        @staticmethod
+        def _running():
+            return True
+
+        @staticmethod
+        def _wait_for_user_idle():
+            return True
+
+        @staticmethod
+        def _wait(_seconds):
+            return False
+
+        def _emit_log(self, message, level):
+            self.logs.append((message, level))
+
+    def test_click_requires_context_and_target_in_all_three_frames(self):
+        context_files = ['already_end_1.png']
+        target_files = ['ok_1.png']
+        frames = (
+            (((500, 300), 0.96, context_files[0]),
+             ((500, 500), 0.95, target_files[0])),
+            (((501, 300), 0.96, context_files[0]),
+             ((501, 500), 0.95, target_files[0])),
+            (((502, 300), 0.96, context_files[0]),
+             ((502, 500), 0.95, target_files[0])),
+        )
+        worker = self.Worker()
+        with patch.object(
+                click_action, '_template_files',
+                side_effect=(context_files, target_files),
+        ), patch.object(
+                click_behavior, 'best_template_matches', side_effect=frames,
+        ) as match_groups, patch.object(
+                click_behavior, 'get_client_size', return_value=(2560, 1440),
+        ), patch.object(
+                click_behavior, 'click_auto', return_value=2,
+        ) as click_auto, patch.object(
+                click_action.template_confidence, 'threshold_for', return_value=0.8,
+        ):
+            result = click_action.click_contextual_item_with_result(
+                worker,
+                'already_end',
+                'already_end',
+                'ok',
+                'ok',
+                search_region=(0.2, 0.2, 0.8, 0.85),
+            )
+
+        self.assertEqual(result, 2)
+        self.assertEqual(match_groups.call_count, 3)
+        self.assertTrue(all(
+            call.kwargs['search_region'] == (0.2, 0.2, 0.8, 0.85)
+            for call in match_groups.call_args_list
+        ))
+        click_auto.assert_called_once_with((501, 500), worker._running)
+
+    def test_context_disappearing_prevents_clicking_another_ok(self):
+        context_files = ['already_end_1.png']
+        target_files = ['ok_1.png']
+        frames = (
+            (((500, 300), 0.96, context_files[0]),
+             ((500, 500), 0.95, target_files[0])),
+            ((None, 0.0, None),
+             ((500, 500), 0.95, target_files[0])),
+        )
+        worker = self.Worker()
+        with patch.object(
+                click_action, '_template_files',
+                side_effect=(context_files, target_files),
+        ), patch.object(
+                click_behavior, 'best_template_matches', side_effect=frames,
+        ), patch.object(
+                click_behavior, 'get_client_size', return_value=(2560, 1440),
+        ), patch.object(
+                click_behavior, 'click_auto', return_value=2,
+        ) as click_auto, patch.object(
+                click_action.template_confidence, 'threshold_for', return_value=0.8,
+        ):
+            result = click_action.click_contextual_item_with_result(
+                worker,
+                'already_end',
+                'already_end',
+                'ok',
+                'ok',
+                search_region=(0.2, 0.2, 0.8, 0.85),
+            )
+
+        self.assertEqual(result, 1)
+        click_auto.assert_not_called()
+
+
+class RefreshInputTimingTests(unittest.TestCase):
+    def test_template_click_records_actual_click_timestamp(self):
+        class Worker:
+            _last_automation_click_at = None
+            _next_automation_input_at = 0.0
+
+            def _running(self):
+                return True
+
+        worker = Worker()
+        with patch.object(click_behavior.pyautogui, 'moveTo'), \
+                patch.object(click_behavior.pyautogui, 'click'), \
+                patch.object(click_behavior, '_record_automation_position'), \
+                patch.object(click_behavior.time, 'sleep'), \
+                patch.object(click_behavior.time, 'monotonic', return_value=123.25):
+            result = click_behavior.click_auto((100, 200), worker._running)
+
+        self.assertEqual(result, 2)
+        self.assertEqual(worker._last_automation_click_at, 123.25)
+
+    def test_refresh_interval_includes_processing_before_next_input(self):
+        waits = []
+
+        class Worker:
+            _next_automation_input_at = 104.5
+
+            def _running(self):
+                return True
+
+            def _wait(self, seconds):
+                waits.append(seconds)
+                return False
+
+        worker = Worker()
+        with patch.object(click_behavior.time, 'monotonic',
+                          side_effect=(102.0, 104.5)):
+            ready = click_behavior.wait_for_automation_input_deadline(
+                worker._running,
+            )
+
+        self.assertTrue(ready)
+        self.assertEqual(waits, [2.5])
+        self.assertEqual(worker._next_automation_input_at, 0.0)
+
+    def test_refresh_deadline_uses_actual_mouse_click_timestamp(self):
+        class Worker:
+            signal = types.SimpleNamespace(emit=lambda _message: None)
+            _last_automation_click_at = 90.0
+            _next_automation_input_at = 0.0
+
+            def _click_until(self, _picture, _name):
+                self._last_automation_click_at = 100.0
+                return 2
+
+        worker = Worker()
+        result = link_raid.LinkRaidWorker._refresh_battle_list(worker)
+
+        self.assertEqual(result, 2)
+        self.assertEqual(
+            worker._next_automation_input_at,
+            100.0 + link_raid.REFRESH_MIN_CLICK_INTERVAL,
+        )
+
+
+class LinkRaidLevelSearchTests(unittest.TestCase):
+    class Signal:
+        @staticmethod
+        def emit(_message):
+            pass
+
+    def test_rescans_before_one_scroll_then_scans_final_time(self):
+        events = []
+        outcomes = iter((0, 2))
+
+        class Worker:
+            signal = LinkRaidLevelSearchTests.Signal()
+            level_choice = 6
+
+            @staticmethod
+            def _running():
+                return True
+
+            @staticmethod
+            def _scan_lv():
+                events.append('scan')
+                return next(outcomes)
+
+            @staticmethod
+            def _wait(seconds):
+                events.append(('wait', seconds))
+                return False
+
+        def move_once(*_args, **_kwargs):
+            events.append('scroll')
+            return 2
+
+        with patch.object(
+                link_raid.click_action, 'move_a_to_b_scaled',
+                side_effect=move_once,
+        ) as move:
+            result = link_raid.LinkRaidWorker._find_lv_by_scroll(Worker())
+
+        self.assertEqual(result, 2)
+        self.assertEqual(events, [
+            'scan', 'scroll', ('wait', link_raid.SCROLL_SETTLE_DELAY), 'scan',
+        ])
+        move.assert_called_once()
+
+    def test_successful_rescan_avoids_scroll(self):
+        class Worker:
+            signal = LinkRaidLevelSearchTests.Signal()
+            level_choice = 6
+            _running = staticmethod(lambda: True)
+            _scan_lv = staticmethod(lambda: 2)
+            _wait = staticmethod(lambda _seconds: False)
+
+        with patch.object(
+                link_raid.click_action, 'move_a_to_b_scaled',
+        ) as move:
+            result = link_raid.LinkRaidWorker._find_lv_by_scroll(Worker())
+
+        self.assertEqual(result, 2)
+        move.assert_not_called()
+
+
 class LinkRaidRecoveryTests(unittest.TestCase):
     class Signal:
         def __init__(self):
@@ -685,17 +908,209 @@ class LinkRaidRecoveryTests(unittest.TestCase):
         )
         with patch.object(link_raid.click_action, 'find_first_item_with_result',
                           side_effect=(full_entry, None)), \
+                patch.object(
+                    link_raid.click_action, 'click_contextual_item_with_result',
+                    return_value=2,
+                ) as contextual_click, \
                 patch.object(link_raid.click_action, 'find_item_with_result',
                              side_effect=find_item):
             link_raid.LinkRaidWorker.join_battle(worker)
 
-        self.assertEqual(clicked[1][0],
-                         './aim/quests/link_raid/backup_requests/join/full/ok')
-        self.assertEqual(clicked[2][0], './aim/quests/link_raid/backup_requests/join')
+        contextual_click.assert_called_once_with(
+            worker,
+            './aim/quests/link_raid/backup_requests/join/full/battle_full',
+            'battle_full',
+            './aim/quests/link_raid/backup_requests/join/full/ok',
+            'ok',
+            search_region=link_raid.JOIN_DIALOG_SEARCH_REGION,
+        )
+        self.assertEqual(clicked[1][0], './aim/quests/link_raid/backup_requests/join')
         self.assertEqual(clicked[-1][0], './aim/quests/link_raid/backup_requests/join/play')
         self.assertTrue(any(
             step[0].endswith('battle_full') for step in clicked[0][2]
         ))
+
+    def test_delayed_already_end_is_recovered_while_waiting_for_battle_result(self):
+        events = []
+        already_end = (
+            './aim/quests/link_raid/backup_requests/join/full/already_end',
+            'already_end',
+        )
+        tap = (
+            './aim/quests/link_raid/backup_requests/battle/tap_to_countinue',
+            'tap_to_countinue',
+        )
+        back = (
+            './aim/quests/link_raid/backup_requests/battle/back',
+            'back',
+        )
+
+        class Worker:
+            signal = LinkRaidRecoveryTests.Signal()
+            _wait_battle_outcome = link_raid.LinkRaidWorker._wait_battle_outcome
+            _recover_already_ended_battle = \
+                link_raid.LinkRaidWorker._recover_already_ended_battle
+
+            @staticmethod
+            def _running():
+                return True
+
+            @staticmethod
+            def _wait(_seconds):
+                return False
+
+            @staticmethod
+            def _emit_log(_message, _level):
+                raise AssertionError('不应超时')
+
+            @staticmethod
+            def _finish():
+                raise AssertionError('不应停止任务')
+
+            @staticmethod
+            def _click_until(picture, _name, *args, **kwargs):
+                events.append(('click', picture))
+                return 2
+
+            @staticmethod
+            def prepare_matching_battle():
+                events.append(('prepare', None))
+                return True
+
+            @staticmethod
+            def join_battle():
+                events.append(('join', None))
+
+            @staticmethod
+            def like_battle_result():
+                events.append(('like', None))
+
+        with patch.object(
+                link_raid.click_action, 'find_first_item_with_result',
+                side_effect=(None, already_end, tap, back),
+        ), patch.object(
+                link_raid.click_action, 'click_contextual_item_with_result',
+                return_value=2,
+        ) as contextual_click, patch.object(
+                link_raid.click_action, 'click_fixed_position_for_item_with_result',
+                return_value=2,
+        ) as fixed_click:
+            link_raid.LinkRaidWorker.battle_and_finish(Worker())
+
+        self.assertEqual(events[:3], [
+            ('prepare', None),
+            ('join', None),
+            ('like', None),
+        ])
+        self.assertEqual(events[-2:], [
+            ('like', None),
+            ('click', './aim/quests/link_raid/backup_requests/battle/back'),
+        ])
+        contextual_click.assert_called_once_with(
+            ANY,
+            already_end[0],
+            already_end[1],
+            './aim/quests/link_raid/backup_requests/join/ok',
+            'ok',
+            search_region=link_raid.JOIN_DIALOG_SEARCH_REGION,
+        )
+        fixed_click.assert_called_once()
+
+    def test_single_frame_already_end_false_positive_never_clicks_ok(self):
+        already_end = (
+            './aim/quests/link_raid/backup_requests/join/full/already_end',
+            'already_end',
+        )
+        tap = (
+            './aim/quests/link_raid/backup_requests/battle/tap_to_countinue',
+            'tap_to_countinue',
+        )
+        back = (
+            './aim/quests/link_raid/backup_requests/battle/back',
+            'back',
+        )
+
+        class Worker:
+            signal = LinkRaidRecoveryTests.Signal()
+
+            @staticmethod
+            def _running():
+                return True
+
+            @staticmethod
+            def _wait(_seconds):
+                return False
+
+            @staticmethod
+            def _emit_log(_message, _level):
+                raise AssertionError('不应超时')
+
+            @staticmethod
+            def _finish():
+                raise AssertionError('不应停止任务')
+
+        with patch.object(
+                link_raid.click_action, 'find_first_item_with_result',
+                side_effect=(already_end, tap, back),
+        ), patch.object(
+                link_raid.click_action, 'click_contextual_item_with_result',
+                return_value=1,
+        ) as contextual_click, patch.object(
+                link_raid.click_action, 'click_fixed_position_for_item_with_result',
+                return_value=2,
+        ) as fixed_click:
+            result = link_raid.LinkRaidWorker._wait_battle_outcome(Worker())
+
+        self.assertEqual(result, 'finished')
+        contextual_click.assert_called_once()
+        fixed_click.assert_called_once()
+
+    def test_battle_result_checks_back_only_after_confirmed_tap_click(self):
+        captured_states = []
+        tap = (
+            './aim/quests/link_raid/backup_requests/battle/tap_to_countinue',
+            'tap_to_countinue',
+        )
+        back = (
+            './aim/quests/link_raid/backup_requests/battle/back',
+            'back',
+        )
+
+        class Worker:
+            signal = LinkRaidRecoveryTests.Signal()
+
+            @staticmethod
+            def _running():
+                return True
+
+            @staticmethod
+            def _wait(_seconds):
+                return False
+
+            @staticmethod
+            def _emit_log(_message, _level):
+                raise AssertionError('不应超时')
+
+            @staticmethod
+            def _finish():
+                raise AssertionError('不应停止任务')
+
+        def find_state(_worker, states):
+            captured_states.append(states)
+            return tap if len(captured_states) == 1 else back
+
+        with patch.object(
+                link_raid.click_action, 'find_first_item_with_result',
+                side_effect=find_state,
+        ), patch.object(
+                link_raid.click_action, 'click_fixed_position_for_item_with_result',
+                return_value=2,
+        ):
+            result = link_raid.LinkRaidWorker._wait_battle_outcome(Worker())
+
+        self.assertEqual(result, 'finished')
+        self.assertFalse(any(state[1] == 'back' for state in captured_states[0]))
+        self.assertTrue(any(state[1] == 'back' for state in captured_states[1]))
 
     def test_scrolled_likes_still_respect_nine_click_limit(self):
         state = {'calls': 0, 'successes': 0}
@@ -834,6 +1249,77 @@ class UpdateCancellationTests(unittest.TestCase):
 
         self.assertFalse(cancel.is_set())
         self.assertEqual(holder._update_state, 'checking')
+
+    def test_startup_update_offer_runs_before_template_refresh(self):
+        events = []
+        holder = types.SimpleNamespace(
+            _closing=False,
+            _update_job_id='startup-job',
+            _update_state='checking',
+            _update_check_thread=object(),
+            _update_cancel=Mock(),
+            _startup_update_check_pending=True,
+            _refresh_control_state=lambda: None,
+            _append_log=lambda *_args, **_kwargs: None,
+            _offer_update=lambda _result: events.append('offer'),
+            _refresh_templates_at_startup=Mock(),
+        )
+        holder._continue_startup_after_update = types.MethodType(
+            mywindow._continue_startup_after_update, holder,
+        )
+
+        with patch('main.QTimer.singleShot',
+                   side_effect=lambda *_args: events.append('refresh')):
+            mywindow._on_update_checked(holder, 'startup-job', {
+                'has_update': True,
+                'message': '发现新版本',
+            })
+
+        self.assertEqual(events, ['offer', 'refresh'])
+        self.assertFalse(holder._startup_update_check_pending)
+
+    def test_accepted_startup_update_keeps_template_refresh_waiting(self):
+        refresh = Mock()
+        holder = types.SimpleNamespace(
+            _startup_update_check_pending=True,
+            _closing=False,
+            _update_state='downloading',
+            _refresh_templates_at_startup=refresh,
+        )
+
+        with patch('main.QTimer.singleShot') as single_shot:
+            mywindow._continue_startup_after_update(holder)
+
+        single_shot.assert_not_called()
+        self.assertTrue(holder._startup_update_check_pending)
+
+    def test_failed_startup_update_resumes_template_refresh(self):
+        events = []
+
+        def reset_update_state(cleanup):
+            events.append(('reset', cleanup))
+            holder._update_state = 'idle'
+
+        holder = types.SimpleNamespace(
+            _closing=False,
+            _update_job_id='startup-job',
+            _update_state='downloading',
+            _update_prepare_thread=object(),
+            _startup_update_check_pending=True,
+            _append_log=lambda *_args, **_kwargs: None,
+            _reset_update_state=reset_update_state,
+            _refresh_templates_at_startup=Mock(),
+        )
+        holder._continue_startup_after_update = types.MethodType(
+            mywindow._continue_startup_after_update, holder,
+        )
+
+        with patch('main.QTimer.singleShot',
+                   side_effect=lambda *_args: events.append(('refresh', None))):
+            mywindow._on_update_failed(holder, 'startup-job', '下载失败')
+
+        self.assertEqual(events, [('reset', False), ('refresh', None)])
+        self.assertFalse(holder._startup_update_check_pending)
 
 
 class WindowFocusEfficiencyTests(unittest.TestCase):
