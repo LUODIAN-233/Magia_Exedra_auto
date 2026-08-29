@@ -6,7 +6,7 @@
     <img alt="Platform" src="https://img.shields.io/badge/プラットフォーム-Windows-0078D4">
     <img alt="Architecture" src="https://img.shields.io/badge/アーキテクチャ-x86--64-555555">
     <img alt="GUI" src="https://img.shields.io/badge/GUI-PySide6-41CD52">
-    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.4.3" src="https://img.shields.io/badge/Release-2.4.3-2ea44f"></a>
+    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.5.0" src="https://img.shields.io/badge/Release-2.5.0-2ea44f"></a>
   </p>
   <p>
     <a href="./README.md">简体中文</a> · <a href="./README_EN.md">English</a> · <a href="./README_JP.md">日本語</a>
@@ -15,11 +15,11 @@
 
 ---
 
-## 2.4.3 の変更点
+## 2.5.0 の変更点
 
-- EXE 起動時は自動更新チェックを完了してからテンプレートのスケーリングを開始します。更新の承認がスケーリングに阻止されず、ダウンロードのキャンセルまたは失敗後はスケーリングを再開します。
-- Link Raid で `play` をクリックした後、戦闘待機中は遅れて表示される `already_end` を継続して確認します。中央領域で完全なメッセージと対応する `OK` が3フレーム連続して同時に一致した場合だけ1回クリックして再検索し、1フレームだけの誤検出では汎用 `OK` をクリックしません。
-- 最初のレベル検索で見つからない場合は、もう一度検索してから下方向へのスクロールを最大1回だけ行い、最後に再検索します。更新ボタンを実際にクリックしてから次の自動入力まで最低4.5秒を確保し、その間の認識と処理時間も含めます。
+- Link Raid で複数レベルを選択し、ユーザーが設定した優先順位で部屋を検索できます。9/10 と 10/10 は個別にスキップを設定でき、参加人数を読み取れない部屋は参加を試みます。
+- 自動周回モードと各モードの全パラメータを変更時に保存し、次回起動時に復元します。Link Raid から不要になった「いいね」操作を削除しました。
+- Server酱 の重大イベント通知を追加し、専用 SendKey、1～2個の配信チャネル、イベントごとの設定に対応しました。バックグラウンド送信は再試行と重複排除を行い、手動停止やアプリ終了では自動終了通知を送信しません。
 
 ## ダウンロードと起動
 

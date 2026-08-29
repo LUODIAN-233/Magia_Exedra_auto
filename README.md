@@ -6,7 +6,7 @@
     <img alt="Platform" src="https://img.shields.io/badge/平台-Windows-0078D4">
     <img alt="Architecture" src="https://img.shields.io/badge/架构-x86--64-555555">
     <img alt="GUI" src="https://img.shields.io/badge/界面-PySide6-41CD52">
-    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.4.3" src="https://img.shields.io/badge/Release-2.4.3-2ea44f"></a>
+    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.5.0" src="https://img.shields.io/badge/Release-2.5.0-2ea44f"></a>
   </p>
   <p>
     <a href="./README.md">简体中文</a> · <a href="./README_EN.md">English</a> · <a href="./README_JP.md">日本語</a>
@@ -15,11 +15,11 @@
 
 ---
 
-## 2.4.3 更新
+## 2.5.0 更新
 
-- EXE 启动时先完成自动更新检查，再开始模板缩放；接受更新不会再被缩放任务阻止，下载取消或失败后会恢复缩放。
-- Link Raid 点击 `play` 后会在整个战斗等待期持续检查延迟出现的 `already_end`。只有完整弹窗文字与对应 `OK` 在中央区域连续三帧同时命中时才单击关闭并重新匹配，单帧误报不会触发通用 `OK`。
-- 等级列表初扫失败后会先复扫，再至多向下滑动一次并进行最后扫描。刷新按钮实际点击到下一次自动化输入至少间隔 4.5 秒，期间的识别和处理耗时计入间隔。
+- Link Raid 支持同时选择多个等级并按用户设置的优先级找房；9/10 与 10/10 房间可分别跳过，人数无法可靠读取时允许尝试加入。
+- 挂机模式和各模式参数会立即保存并在下次启动恢复；Link Raid 已移除不再需要的点赞操作。
+- 新增 Server酱重大事件通知，可配置专用 SendKey、1-2 个推送通道和独立事件开关；后台发送支持重试和去重，手动停止或关闭程序不会推送自动结束通知。
 
 ## 下载与启动
 
