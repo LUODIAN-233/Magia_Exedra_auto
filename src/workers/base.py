@@ -49,19 +49,38 @@ class BaseWorker(QThread):
     #所有挂机工作线程的基类。子类只需实现 run()，流程中用 self._running() / self._wait() / self._click_until()。
     signal = Signal(str)
     logSignal = Signal(str, str)
+    majorEvent = Signal(str, str, object)
 
     def __init__(self):
         super().__init__()
         self._stop_event = threading.Event()
+        self._manual_stop_event = threading.Event()
         self._active = False
+        self._major_event_emitted = False
         self.expected_pack = None
         self._last_automation_position = None
         self._last_automation_click_at = None
         self._next_automation_input_at = 0.0
+        self._notification_params = {}
         self._activity_guard = UserActivityGuard(state_callback=self._activity_changed)
 
     def _emit_log(self, message, level='INFO'):
         self.logSignal.emit(str(message), str(level).upper())
+
+    def _emit_major_event(self, event_key, reason, params=None):
+        self._major_event_emitted = True
+        details = dict(self._notification_params)
+        details.update(dict(params or {}))
+        self.majorEvent.emit(str(event_key), str(reason), details)
+
+    def _emit_auto_end_if_needed(self):
+        if self._manual_stop_event.is_set() or self._major_event_emitted:
+            return False
+        self._emit_major_event(
+            'worker_auto_ended',
+            '挂机流程在未收到手动停止请求的情况下自动结束。',
+        )
+        return True
 
     def _activity_changed(self, paused, reason=None):
         if paused:
@@ -90,6 +109,7 @@ class BaseWorker(QThread):
     def stop(self):
         #GUI 调用：请求停止。置位事件并清掉 active 标志，让 _running() 立刻变 False。
         #对未启动或已结束的线程调用也是安全的。
+        self._manual_stop_event.set()
         self._finish()
 
     def start(self, priority=QThread.InheritPriority):
@@ -99,7 +119,9 @@ class BaseWorker(QThread):
             self._emit_log('挂机线程尚未结束，不能重新启动。', 'WARNING')
             return False
         self._stop_event.clear()
+        self._manual_stop_event.clear()
         self._active = True
+        self._major_event_emitted = False
         self._last_automation_position = None
         self._last_automation_click_at = None
         self._next_automation_input_at = 0.0
@@ -125,10 +147,15 @@ class BaseWorker(QThread):
             pass
         except TimeoutError as e:
             self._emit_log(f'{e}，本次挂机未启动。', 'ERROR')
-        except Exception:
+        except Exception as error:
+            self._emit_major_event(
+                'worker_exception',
+                f'{type(error).__name__} 导致挂机线程异常退出：{error}',
+            )
             self._emit_log('挂机线程异常退出：\n' + traceback.format_exc(), 'ERROR')
         finally:
             self._activity_guard.stop()
+            self._emit_auto_end_if_needed()
             self._finish()
 
     def _click_until(self, picture, name, timeout=RETRY_TIMEOUT, next_steps=(),
@@ -235,6 +262,11 @@ class BaseWorker(QThread):
             if self._wait(min(poll_interval, max(0, deadline - time.monotonic()))):
                 break
         if result == 1 and self._running():
+            self._emit_major_event(
+                'timeout',
+                f'等待识别或推进 {name} 超时。',
+                {'步骤': name, '超时秒数': timeout},
+            )
             self._emit_log(
                 f'等待{name}超过{timeout}秒，已安全停止。请检查起始界面、模板语言和分辨率。',
                 'ERROR',

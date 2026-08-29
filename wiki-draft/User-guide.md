@@ -32,21 +32,21 @@ Leave the game on the main/Lighthouse screen. Do not enter backup requests first
 
 ### Options
 
-- Level: LV4 or LV6-LV12.
+- Levels and priority: enable any combination of LV4 and LV6-LV12. Top-to-bottom order is priority and arrow buttons change it. The initial default is LV6 only.
+- Room population: `跳过 9/10 房间` and `跳过 10/10 房间` are independent and both default on. An unreadable count is always allowed.
 - Stamina potions: the GUI shows the actual allowed count; automation stops after it is exhausted.
 
 ### Flow
 
 1. Open quests and Link Raid.
 2. Open backup requests and clear finished battles.
-3. Refresh and search for the selected level.
+3. Refresh and search selected levels in priority order.
 4. Join battle and wait for results.
-5. Handle available likes after normal results or finished-battle cleanup.
-6. Return to backup requests and repeat.
+5. Advance the result screen, return to backup requests, and repeat.
 
-If the selected level is missing or cannot be clicked safely, the bot refreshes and searches again without joining another level. At the same candidate position, level recognition compares every supported level and independently scores the central level-number region. A click occurs only when both classifiers choose the requested level. When the initial scan finds neither the level nor `no_lv`, the list is rescanned before at most one downward scroll and a final scan. At least 4.5 seconds separate the actual refresh click from the next automation input, with recognition and processing time included. Candidates at `9/10`, `10/10`, or with an unreadable participant count are skipped safely. A full or already-ended room is dismissed and rematched.
+The bot selects the first eligible candidate by level priority. If a higher-priority level has no eligible room, it immediately tries the next selected level and never joins an unselected level. At the same candidate position, recognition compares every supported level and independently scores the central level-number region. A click occurs only when both classifiers choose the same selected level. When the initial scan finds neither a selected level nor `no_lv`, the list is rescanned before at most one downward scroll and a final scan. At least 4.5 seconds separate the actual refresh click from the next automation input, with recognition and processing time included. An unreadable participant count is allowed; `9/10` and `10/10` are skipped or attempted independently according to user settings. A full or already-ended room is dismissed and rematched.
 
-After `play`, the full battle wait checks both delayed `already_end` dialogs and normal result states. A delayed dialog is dismissed and rematched only when its full message and corresponding `OK` are both present in the central dialog region for three consecutive frames; a one-frame false positive or disappearing dialog cannot click a generic `OK` on another page. The result screen is confirmed only from locally adaptive text outlines of `tap_to_countinue_1/2`; medal graphics are not required, and the animated background is ignored. Every click requires three-frame confirmation. If the first click does not advance and the text remains, at most one second click is allowed. The bot accepts `back` and starts likes only after at least one confirmed click. After scrolling the likes list, it moves the pointer away, waits for the page to settle, and retries recognition for three seconds. Clicking `joined_battles` does not trigger likes by itself.
+After `play`, the full battle wait checks both delayed `already_end` dialogs and normal result states. A delayed dialog is dismissed and rematched only when its full message and corresponding `OK` are both present in the central dialog region for three consecutive frames; a one-frame false positive or disappearing dialog cannot click a generic `OK` on another page. The result screen is confirmed only from locally adaptive text outlines of `tap_to_countinue_1/2`; medal graphics are not required, and the animated background is ignored. Every click requires three-frame confirmation. If the first click does not advance and the text remains, at most one second click is allowed. The bot accepts `back` only after at least one confirmed click, then returns directly.
 
 ## Crystalis
 
@@ -96,12 +96,22 @@ These safeguards reduce false clicks caused by one-frame similarities and window
 | Setting | Behavior |
 |:--------|:---------|
 | Automation mode | Restores the last selected mode at next startup |
+| Automation parameters | Every registered parameter is saved atomically as soon as its control changes; stamina potions store the count shown in the GUI |
 | Game language | Remembers the last selection; the actual `aim` target remains authoritative |
 | Log level | Defaults to `INFO` and controls GUI debug records and file logs |
 | Log retention | Defaults to seven days, supports 1-365 days, and cleans expired logs at startup |
 | `更新至 beta 版` | Selected by default in beta builds; clear it to check only stable versions |
+| Server酱 notifications | Disabled by default; the SendKey, channels, and events remain in local `settings.json` |
 
 `清理过时日志` immediately applies the current retention period. The active session log and its rotations are always retained.
+
+## Server酱 notifications
+
+Under `设置` > `通知设置`, enter an `SCT` SendKey, select one or two channels, and explicitly enable notifications. The field is masked by default. Plaintext remains only in local, Git-ignored `settings.json` and is never written to GUI or file logs. If an older configuration contains more than two channels, the first two are retained in their saved order.
+
+Choose at most two from the WeChat service account, WeChat test account, WeCom application message, WeCom/DingTalk/Feishu group bots, Bark iOS, PushDeer, the official Android client, and a custom Webhook. Bind the selected channels on the Server酱 website first. Event filters cover automatic script termination, stamina recovery exhaustion, recognition or battle timeout, Worker exception, update failure, and an update-recovery marker blocking automation.
+
+Delivery runs in the background and never blocks automation. Failures are retried up to three times with increasing delays, and identical events are sent at most once per ten minutes. `脚本自动结束` is sent only when the Worker ends without a manual stop and without another major event in the same run. Clicking `停止挂机` or closing the application sends nothing, while stamina exhaustion, timeout, and abnormal termination do not also emit this event. `发送测试通知` bypasses both the master switch and deduplication and reports its result in the settings dialog.
 
 ## Log levels
 

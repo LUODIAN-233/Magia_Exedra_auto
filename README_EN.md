@@ -34,16 +34,16 @@
 
 | Mode | Screen before starting | Options | Automation |
 |:-----|:-----------------------|:--------|:-----------|
-| **Link Raid** | Main/Lighthouse screen | LV4 or LV6-LV12, stamina-potion count | Opens backup requests, refreshes, selects the requested level, joins battles, clears results, and gives likes |
+| **Link Raid** | Main/Lighthouse screen | Multiple levels and priority, separate 9/10 and 10/10 room rules, stamina-potion count | Opens backup requests, refreshes, selects levels by priority, joins battles, and clears results |
 | **Crystalis** | Stage and team selected; clicking `play` would start battle | Stamina-potion count | Starts battle, waits for results, clicks `retry`, and continues farming |
 
-The task stops safely when a target cannot be found, a wait times out, or the configured potion count is exhausted. Link Raid never substitutes another level when the selected level is unavailable.
+The task stops safely when a target cannot be found, a wait times out, or the configured potion count is exhausted. Link Raid can enable LV4 and LV6-LV12 together. If the highest-priority level has no eligible room, it immediately tries the next selected level and never joins an unselected level. An unreadable participant count is allowed; 9/10 and 10/10 rooms can each be skipped or attempted independently.
 
 ## First run
 
 1. Start the game in windowed mode and keep its full image visible.
 2. Launch this tool and wait for the template list to finish refreshing. Select the game language; resolution is matched automatically from the game client area.
-3. Select `挂机模式` (automation mode), set its options, and click `启动挂机` (start).
+3. Select `挂机模式` (automation mode), set its options, and click `启动挂机` (start). The selected mode and every mode's parameters are saved immediately after changes and restored on the next launch.
 
 You may use the keyboard or move the mouse while the task is active. Automation pauses and resumes after five seconds without user input. Click `停止挂机` to end the current task.
 
@@ -56,9 +56,15 @@ You may use the keyboard or move the mouse while the task is active. Automation 
 |:--------|:---------|
 | Game language | English and Japanese are supported; the last selection is remembered |
 | Resolution | Automatically selects `720p` / `1080p` / `2K` / `4K` templates |
+| Automation options | All parameters are remembered per mode; Link Raid initially selects only LV6 and skips both 9/10 and 10/10 rooms |
 | Log level | New installations default to `INFO`; the setting controls GUI debug records and files under `logs/` |
 | Log retention | Defaults to seven days and supports 1-365 days; cleanup runs at startup or manually |
 | Beta updates | Prerelease builds enable the beta channel by default; change it under `设置` |
+| Server酱 notifications | Disabled by default; configure a masked SendKey, one or two delivery channels, and major events; settings remain in local `settings.json` |
+
+Server酱 channels include WeChat service and test accounts, WeCom application messages, WeCom/DingTalk/Feishu group bots, Bark, PushDeer, the official Android client, and a custom Webhook; select one or two channels. Delivery runs in the background, identical events are deduplicated for ten minutes, and failures are retried up to three times. Automatic script termination has its own event, while manual stop or application close sends nothing; stamina exhaustion, timeout, and abnormal termination do not also send the automatic-termination event. The SendKey is never written to logs.
+
+For first-time setup, see the Chinese [Server酱 notification setup guide](./README_SERVERCHAN.md), including login, subscription/payment, dedicated SendKey, and fee-recipient details.
 
 ## Before use
 

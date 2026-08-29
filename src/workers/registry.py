@@ -3,7 +3,9 @@
 #声明自己的显示名、起始界面提示和参数列表，GUI 遍历 REGISTRY 自动生成按钮和参数控件。
 #
 #参数（ParamSpec）描述一个 worker 启动前需要 GUI 收集的输入：
-#  kind='choice'    单选（如 Link Raid 等级），用 QRadioButton 组
+#  kind='choice'    单选，用 QRadioButton 组
+#  kind='ordered_multi_choice' 有序多选，用勾选列表和上移/下移按钮维护优先级
+#  kind='bool'      布尔选项，用 QCheckBox
 #  kind='lp_recover' 喝体力药次数，用 最小/-1/输入/+1/最大 那套控件；显示的是"喝几次"，
 #                   传给 worker 时自动 +1（存储语义：1=不喝药，2=喝一次……，见 AGENTS.md）
 #  kind='int'       普通整数输入（留作扩展，当前未用）
@@ -19,12 +21,33 @@ class ParamSpec:
     #一个 worker 参数的描述，GUI 据此生成控件
     key: str                    #传给 worker 的属性名（worker.lp_recover_times 等）
     label: str                  #控件标题
-    kind: str = 'int'           #'choice' | 'lp_recover' | 'int'
+    kind: str = 'int'           #'choice' | 'ordered_multi_choice' | 'bool' | 'lp_recover' | 'int'
     default: Any = 0            #默认值（用户看到的值；lp_recover 也是显示值，不+1）
     min: int = 0                #int / lp_recover 的最小值
     max: int = 10               #int / lp_recover 的最大值
     choices: List[Any] = field(default_factory=list)  #choice 的可选项
     hint: str = ''              #可选的附加说明
+
+    def normalize(self, value):
+        """把持久化值收敛到当前参数定义；非法或旧值回退到默认值。"""
+        if self.kind == 'choice':
+            return value if value in self.choices else self.default
+        if self.kind == 'ordered_multi_choice':
+            if not isinstance(value, (list, tuple)):
+                value = self.default
+            normalized = []
+            for item in value:
+                if item in self.choices and item not in normalized:
+                    normalized.append(item)
+            return normalized or list(self.default)
+        if self.kind == 'bool':
+            return value if isinstance(value, bool) else self.default
+        if self.kind in ('lp_recover', 'int'):
+            if isinstance(value, int) and not isinstance(value, bool) \
+                    and self.min <= value <= self.max:
+                return value
+            return self.default
+        return self.default
 
 
 @dataclass
@@ -35,7 +58,7 @@ class WorkerMeta:
     worker_class: type          #BaseWorker 子类
     params: List[ParamSpec]     #参数列表
     start_hint: str = ''        #启动提示（如 '需要在游戏主界面启动'）
-    #可使用 {参数名}，启动时按当前 GUI 参数展开，例如 lv{level_choice}
+    #可使用 {参数名}，启动时按当前 GUI 参数展开。
     required_templates: List[str] = field(default_factory=list)
 
 
@@ -46,8 +69,8 @@ REGISTRY: List[WorkerMeta] = []
 def register(name, label, params=None, start_hint='', required_templates=None):
     #装饰器：把一个 BaseWorker 子类注册到 REGISTRY。
     #用法：
-    #  @register('link_raid', 'link raid挂机启动',
-    #            params=[ParamSpec('level_choice', '...', kind='choice', ...)],
+    #  @register('example', '示例挂机启动',
+    #            params=[ParamSpec('mode', '...', kind='choice', ...)],
     #            start_hint='需要在游戏主界面启动')
     #  class LinkRaidWorker(BaseWorker): ...
     def decorator(cls):
@@ -56,12 +79,22 @@ def register(name, label, params=None, start_hint='', required_templates=None):
         specs = list(params or [])
         param_keys = {spec.key for spec in specs}
         for spec in specs:
-            if spec.kind not in ('choice', 'lp_recover', 'int'):
+            if spec.kind not in ('choice', 'ordered_multi_choice', 'bool',
+                                 'lp_recover', 'int'):
                 raise ValueError(f'{name}.{spec.key} 的参数类型无效: {spec.kind}')
             if spec.kind == 'choice':
                 if not spec.choices or spec.default not in spec.choices:
                     raise ValueError(f'{name}.{spec.key} 的默认选项无效')
-            elif not (spec.min <= spec.default <= spec.max):
+            elif spec.kind == 'ordered_multi_choice':
+                if not spec.choices or not isinstance(spec.default, (list, tuple)) \
+                        or not spec.default or len(set(spec.default)) != len(spec.default) \
+                        or any(value not in spec.choices for value in spec.default):
+                    raise ValueError(f'{name}.{spec.key} 的默认有序多选无效')
+            elif spec.kind == 'bool':
+                if not isinstance(spec.default, bool):
+                    raise ValueError(f'{name}.{spec.key} 的默认布尔值无效')
+            elif isinstance(spec.default, bool) or not isinstance(spec.default, int) \
+                    or not (spec.min <= spec.default <= spec.max):
                 raise ValueError(f'{name}.{spec.key} 的默认值不在范围内')
         templates = list(required_templates or [])
         for template in templates:

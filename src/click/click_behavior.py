@@ -450,8 +450,8 @@ def _competing_match_at_location(match_screen, origin, selected, prepared_templa
 
 
 def best_competing_template_matches(selected, template_groups, radius=3, search_region=None,
-                                    max_candidates=8):
-    """返回多个等级候选点，供上层跳过拥挤的救援条目。"""
+                                     max_candidates=8):
+    """按所选等级优先级返回候选点；每个等级最多保留 max_candidates 个。"""
     screen, origin = _capture_game_window()
     if screen is None:
         return []
@@ -460,25 +460,36 @@ def best_competing_template_matches(selected, template_groups, radius=3, search_
         return []
     match_screen = cv2.GaussianBlur(screen, (3, 3), 0)
     prepared_templates = _prepare_competing_templates(match_screen, template_groups)
+    selected_levels = tuple(selected) if isinstance(selected, (list, tuple)) else (selected,)
+    priorities = {level: index for index, level in enumerate(selected_levels)}
     selected_candidates = []
     for label, path, _template, result, size in prepared_templates:
-        if label != selected:
+        if label not in priorities:
             continue
         for location, size, score in _match_result_candidates(result, size, max_candidates):
             center = (origin[0] + location[0] + size[0] // 2,
                       origin[1] + location[1] + size[1] // 2)
-            if any(max(abs(center[0] - old[0]), abs(center[1] - old[1])) <= max(size)
-                   for old, *_rest in selected_candidates):
+            if any(candidate[0] == label
+                   and max(abs(center[0] - candidate[1][0]),
+                           abs(center[1] - candidate[1][1])) <= max(size)
+                   for candidate in selected_candidates):
                 continue
-            selected_candidates.append((center, score, location, size, str(path)))
-    selected_candidates.sort(key=lambda item: item[1], reverse=True)
+            selected_candidates.append((label, center, score, location, size, str(path)))
+    selected_candidates.sort(key=lambda item: (priorities[item[0]], -item[2]))
 
     matches = []
-    for _center, score, location, size, path in selected_candidates[:max_candidates]:
-        matches.append(_competing_match_at_location(
-            match_screen, origin, selected, prepared_templates,
+    counts = {level: 0 for level in selected_levels}
+    for label, _center, score, location, size, path in selected_candidates:
+        if counts[label] >= max_candidates:
+            continue
+        counts[label] += 1
+        detected = _competing_match_at_location(
+            match_screen, origin, label, prepared_templates,
             location, size, score, path, radius,
-        ))
+        )
+        # 候选按源等级分组排序；交叉模板若把该位置判成另一等级，不能借此越过优先级。
+        if detected[0] == label:
+            matches.append(detected)
     return matches
 
 
@@ -502,15 +513,15 @@ def _digit_has_upper_loop(digit_mask):
     return bool(center_y < 0.43)
 
 
-def _participant_count_is_crowded(mask, client_width):
-    """从参加人数区域判断是否为 9/10 或 10/10；无法判断时返回 None。"""
+def _participant_count_value(mask, client_width):
+    """返回 9、10、8（表示至多 8/10）或 None（无法判断）。"""
     _ys, xs = np.where(mask)
     if xs.size == 0:
         return None
     text_width = int(xs.max() - xs.min() + 1)
     full_width = round(client_width * 0.044)
     if text_width >= full_width:
-        return True
+        return 10
 
     count, labels, stats, _centroids = cv2.connectedComponentsWithStats(
         mask.astype(np.uint8), 8,
@@ -528,11 +539,11 @@ def _participant_count_is_crowded(mask, client_width):
     width = stats[numerator, cv2.CC_STAT_WIDTH]
     height = stats[numerator, cv2.CC_STAT_HEIGHT]
     digit_mask = labels[top:top + height, left:left + width] == numerator
-    return _digit_has_upper_loop(digit_mask)
+    return 9 if _digit_has_upper_loop(digit_mask) else 8
 
 
-def participant_count_crowded_near(point):
-    """识别拥挤状态：True=9/10或10/10，False=至多8/10，None=无法判断。"""
+def participant_count_near(point):
+    """识别参加人数：返回 9、10、8（表示至多 8/10）或 None。"""
     if point is None:
         return None
     screen, origin = _capture_game_window()
@@ -557,12 +568,12 @@ def participant_count_crowded_near(point):
         logger.warning('参加人数区域解析失败: %s', e)
         return None
     mask = gray > 145
-    crowded = _participant_count_is_crowded(mask, width)
-    if crowded is None:
+    value = _participant_count_value(mask, width)
+    if value is None:
         logger.debug('参加人数区域无法可靠解析: %s', point)
         return None
-    logger.debug('参加人数是否达到 9/10 或 10/10: %s，位置 %s', crowded, point)
-    return crowded
+    logger.debug('参加人数识别结果: %s，位置 %s', '≤8/10' if value == 8 else f'{value}/10', point)
+    return value
 
 
 def click_auto(var_avg, can_click=None):

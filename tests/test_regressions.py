@@ -4,17 +4,101 @@ import threading
 import types
 import unittest
 from pathlib import Path
+from contextlib import nullcontext
 from tempfile import TemporaryDirectory
 from unittest.mock import ANY, Mock, call, patch
 
 import cv2
 import numpy as np
 
-from main import mywindow
+from main import SettingsDialog, mywindow
 from src.click import click_action, click_behavior
 from src.core.input_activity import UserActivityGuard
 from src.packs import image_scaler
 from src.workers import base as worker_base, link_raid
+
+
+class WorkerTerminationNotificationTests(unittest.TestCase):
+    @staticmethod
+    def _run(action):
+        worker = worker_base.BaseWorker()
+        events = []
+        worker.majorEvent.connect(
+            lambda event_key, reason, params: events.append(
+                (event_key, reason, params)
+            )
+        )
+        with patch.object(worker_base, 'template_write_lock',
+                          return_value=nullcontext()), \
+                patch.object(worker._activity_guard, 'stop'):
+            worker._run_safely(lambda: action(worker))
+        return events
+
+    def test_automatic_return_emits_auto_end_event(self):
+        events = self._run(lambda _worker: None)
+
+        self.assertEqual([event[0] for event in events], ['worker_auto_ended'])
+        self.assertIn('自动结束', events[0][1])
+
+    def test_manual_stop_does_not_emit_auto_end_event(self):
+        events = self._run(lambda worker: worker.stop())
+
+        self.assertEqual(events, [])
+
+    def test_existing_major_event_suppresses_auto_end_event(self):
+        events = self._run(
+            lambda worker: worker._emit_major_event('timeout', '等待超时。')
+        )
+
+        self.assertEqual([event[0] for event in events], ['timeout'])
+
+    def test_restart_clears_manual_stop_and_major_event_tracking(self):
+        worker = worker_base.BaseWorker()
+        worker.stop()
+        worker._major_event_emitted = True
+
+        with patch.object(worker._activity_guard, 'start'), \
+                patch.object(worker_base.QThread, 'start'):
+            self.assertTrue(worker.start())
+
+        self.assertFalse(worker._manual_stop_event.is_set())
+        self.assertFalse(worker._major_event_emitted)
+        worker.stop()
+
+
+class NotificationChannelSelectionTests(unittest.TestCase):
+    class CheckBox:
+        def __init__(self, checked):
+            self.checked = checked
+
+        def isChecked(self):
+            return self.checked
+
+        def setChecked(self, checked):
+            self.checked = checked
+
+        def blockSignals(self, _blocked):
+            pass
+
+    def test_third_channel_is_reverted_with_feedback(self):
+        first = self.CheckBox(True)
+        second = self.CheckBox(True)
+        third = self.CheckBox(True)
+        status = types.SimpleNamespace(text='', setText=lambda text: setattr(status, 'text', text))
+        emitted = []
+        dialog = types.SimpleNamespace(
+            channelChecks={9: first, 8: second, 18: third},
+            notificationStatusLabel=status,
+            _emit_notification_settings=lambda: emitted.append(True),
+        )
+
+        SettingsDialog._channel_toggled(dialog, third, True)
+
+        self.assertTrue(first.isChecked())
+        self.assertTrue(second.isChecked())
+        self.assertFalse(third.isChecked())
+        self.assertEqual(status.text, '最多选择 2 个推送通道。')
+        self.assertEqual(emitted, [True])
 
 
 class ClientCoordinateTests(unittest.TestCase):
@@ -434,7 +518,7 @@ class PausedInputTests(unittest.TestCase):
 class ParticipantDetectionTests(unittest.TestCase):
     def test_capture_failure_returns_unknown(self):
         with patch.object(click_behavior, '_capture_game_window', return_value=(None, None)):
-            self.assertIsNone(click_behavior.participant_count_crowded_near((100, 100)))
+            self.assertIsNone(click_behavior.participant_count_near((100, 100)))
 
     @staticmethod
     def _level_digit_mask(level):
@@ -466,29 +550,59 @@ class ParticipantDetectionTests(unittest.TestCase):
             height, width = digit.shape
             mask[10:10 + height, 5:5 + width] = digit
             self.assertIs(
-                click_behavior._participant_count_is_crowded(mask, 2560),
-                expected,
+                click_behavior._participant_count_value(mask, 2560),
+                9 if expected else 8,
             )
         full_mask = np.zeros((60, 180), dtype=bool)
         height, width = nine.shape
         full_mask[10:10 + height, 5:5 + width] = nine
         full_mask[10:10 + height, 140:140 + width] = nine
-        self.assertTrue(
-            click_behavior._participant_count_is_crowded(full_mask, 2560)
-        )
+        self.assertEqual(click_behavior._participant_count_value(full_mask, 2560), 10)
 
-    def test_unknown_candidate_is_skipped(self):
+    def test_unknown_candidate_is_allowed(self):
         first = (6, 6, (100, 100), 0.95, 0.95, 'lv6-a.png', 'lv6-a.png')
         second = (6, 6, (200, 200), 0.94, 0.94, 'lv6-b.png', 'lv6-b.png')
         with patch.object(click_behavior, 'best_competing_template_matches',
                           return_value=[first, second]), \
                 patch.object(click_action, '_competing_match_accepted', return_value=True), \
-                patch.object(click_behavior, 'participant_count_crowded_near',
-                             side_effect=[None, False]):
+                patch.object(click_behavior, 'participant_count_near',
+                             side_effect=[None, 8]):
             detected = click_action._best_accepted_competing_detection(
-                6, {}, ('EN', '2560x1440'), skip_crowded=True, name='lv6',
+                6, {}, ('EN', '2560x1440'),
+                skip_participant_counts=(9, 10), name='lv6',
             )
-        self.assertEqual(detected, second)
+        self.assertEqual(detected, first)
+
+    def test_nine_and_ten_can_be_skipped_independently(self):
+        matches = [
+            (6, 6, (100, 100), 0.96, 0.96, 'nine.png', 'nine.png'),
+            (6, 6, (200, 200), 0.95, 0.95, 'ten.png', 'ten.png'),
+            (6, 6, (300, 300), 0.94, 0.94, 'open.png', 'open.png'),
+        ]
+        with patch.object(click_behavior, 'best_competing_template_matches',
+                          return_value=matches), \
+                patch.object(click_action, '_competing_match_accepted', return_value=True), \
+                patch.object(click_behavior, 'participant_count_near',
+                             side_effect=(9, 10, 8)):
+            detected = click_action._best_accepted_competing_detection(
+                6, {}, ('EN', '2560x1440'),
+                skip_participant_counts=(9,), name='lv6',
+            )
+        self.assertEqual(detected, matches[1])
+
+    def test_priority_order_selects_first_eligible_level(self):
+        matches = [
+            (12, 12, (100, 100), 0.95, 0.95, 'lv12.png', 'lv12.png'),
+            (6, 6, (200, 200), 0.99, 0.99, 'lv6.png', 'lv6.png'),
+        ]
+        with patch.object(click_behavior, 'best_competing_template_matches',
+                          return_value=matches), \
+                patch.object(click_action, '_competing_match_accepted', return_value=True), \
+                patch.object(click_behavior, 'participant_count_near', return_value=8):
+            detected = click_action._best_accepted_competing_detection(
+                [12, 6], {}, ('EN', '2560x1440'), name='LV12 > LV6',
+            )
+        self.assertEqual(detected, matches[0])
 
     def test_no_accepted_candidate_does_not_query_none_threshold(self):
         with patch.object(click_behavior, 'best_competing_template_matches',
@@ -503,7 +617,7 @@ class ParticipantDetectionTests(unittest.TestCase):
                     _running=lambda: True,
                     _wait_for_user_idle=lambda: True,
                 ),
-                4, {4: 'lv4'}, 'lv4', skip_crowded=True,
+                4, {4: 'lv4'}, 'lv4', skip_participant_counts=(9, 10),
             )
 
         self.assertEqual(found, 1)
@@ -571,6 +685,35 @@ class CompetingMatchCacheTests(unittest.TestCase):
 
         self.assertEqual(len(matches), 2)
         self.assertEqual(len(full_map_calls), 2)
+
+    def test_cross_level_candidate_cannot_bypass_priority(self):
+        screen = np.zeros((60, 80, 3), dtype=np.uint8)
+        prepared = [
+            (12, 'lv12.png', np.zeros((8, 8, 3), dtype=np.uint8),
+             np.zeros((3, 3), dtype=np.float32), (8, 8)),
+            (6, 'lv6.png', np.zeros((8, 8, 3), dtype=np.uint8),
+             np.zeros((3, 3), dtype=np.float32), (8, 8)),
+        ]
+
+        def classify(_screen, _origin, source_level, _prepared, *_args):
+            if source_level == 12:
+                return 6, 6, (10, 10), 0.96, 0.96, 'lv6.png', 'lv6.png'
+            return 6, 6, (20, 20), 0.95, 0.95, 'lv6.png', 'lv6.png'
+
+        with patch.object(click_behavior, '_capture_game_window',
+                          return_value=(screen, (0, 0))), \
+                patch.object(click_behavior, '_prepare_competing_templates',
+                             return_value=prepared), \
+                patch.object(click_behavior, '_match_result_candidates',
+                             return_value=[((1, 1), (8, 8), 0.95)]), \
+                patch.object(click_behavior, '_competing_match_at_location',
+                             side_effect=classify):
+            matches = click_behavior.best_competing_template_matches(
+                [12, 6], {12: (), 6: ()},
+            )
+
+        self.assertEqual([match[0] for match in matches], [6])
+        self.assertEqual(matches[0][2], (20, 20))
 
 
 class BatchStateDetectionTests(unittest.TestCase):
@@ -803,13 +946,36 @@ class LinkRaidLevelSearchTests(unittest.TestCase):
         def emit(_message):
             pass
 
+    def test_scan_passes_priority_and_independent_participant_rules(self):
+        class Worker:
+            signal = LinkRaidLevelSearchTests.Signal()
+            level_choices = [12, 6]
+            skip_nine_rooms = False
+            skip_ten_rooms = True
+            _running = staticmethod(lambda: True)
+
+        worker = Worker()
+        with patch.object(
+                link_raid.click_action, 'find_competing_item_with_result',
+                return_value=1,
+        ) as find_competing, patch.object(
+                link_raid.click_action, 'find_item_with_result', return_value=2,
+        ):
+            result = link_raid.LinkRaidWorker._scan_lv(worker)
+
+        self.assertEqual(result, 1)
+        args, kwargs = find_competing.call_args
+        self.assertEqual(args[1], [12, 6])
+        self.assertEqual(args[3], 'LV12 > LV6')
+        self.assertEqual(kwargs['skip_participant_counts'], (10,))
+
     def test_rescans_before_one_scroll_then_scans_final_time(self):
         events = []
         outcomes = iter((0, 2))
 
         class Worker:
             signal = LinkRaidLevelSearchTests.Signal()
-            level_choice = 6
+            level_choices = [6]
 
             @staticmethod
             def _running():
@@ -844,7 +1010,7 @@ class LinkRaidLevelSearchTests(unittest.TestCase):
     def test_successful_rescan_avoids_scroll(self):
         class Worker:
             signal = LinkRaidLevelSearchTests.Signal()
-            level_choice = 6
+            level_choices = [6]
             _running = staticmethod(lambda: True)
             _scan_lv = staticmethod(lambda: 2)
             _wait = staticmethod(lambda _seconds: False)
@@ -981,10 +1147,6 @@ class LinkRaidRecoveryTests(unittest.TestCase):
             def join_battle():
                 events.append(('join', None))
 
-            @staticmethod
-            def like_battle_result():
-                events.append(('like', None))
-
         with patch.object(
                 link_raid.click_action, 'find_first_item_with_result',
                 side_effect=(None, already_end, tap, back),
@@ -997,13 +1159,9 @@ class LinkRaidRecoveryTests(unittest.TestCase):
         ) as fixed_click:
             link_raid.LinkRaidWorker.battle_and_finish(Worker())
 
-        self.assertEqual(events[:3], [
+        self.assertEqual(events, [
             ('prepare', None),
             ('join', None),
-            ('like', None),
-        ])
-        self.assertEqual(events[-2:], [
-            ('like', None),
             ('click', './aim/quests/link_raid/backup_requests/battle/back'),
         ])
         contextual_click.assert_called_once_with(
@@ -1111,89 +1269,6 @@ class LinkRaidRecoveryTests(unittest.TestCase):
         self.assertEqual(result, 'finished')
         self.assertFalse(any(state[1] == 'back' for state in captured_states[0]))
         self.assertTrue(any(state[1] == 'back' for state in captured_states[1]))
-
-    def test_scrolled_likes_still_respect_nine_click_limit(self):
-        state = {'calls': 0, 'successes': 0}
-
-        def click_item(*_args, **_kwargs):
-            state['calls'] += 1
-            if state['calls'] % 2:
-                return 1
-            state['successes'] += 1
-            return 2
-
-        class Worker:
-            signal = LinkRaidRecoveryTests.Signal()
-
-            @staticmethod
-            def _running():
-                return state['successes'] < 12
-
-            @staticmethod
-            def _wait(_seconds):
-                return False
-
-            @staticmethod
-            def _emit_log(_message, _level):
-                pass
-
-            @staticmethod
-            def _finish():
-                pass
-
-        with patch.object(link_raid.click_action, 'find_item_with_result',
-                          return_value=2), \
-                patch.object(link_raid.click_action, 'click_item_with_result',
-                             side_effect=click_item), \
-                patch.object(link_raid.click_action, 'move_a_to_b_scaled', return_value=2), \
-                patch.object(link_raid.click_action, 'move_position_scaled', return_value=2):
-            link_raid.LinkRaidWorker.like_battle_result(Worker())
-
-        self.assertEqual(state['successes'], 9)
-
-    def test_scrolled_likes_retry_after_first_post_scroll_miss(self):
-        state = {'calls': 0, 'successes': 0}
-
-        def click_item(*_args, **_kwargs):
-            state['calls'] += 1
-            if state['calls'] < 3:
-                return 1
-            state['successes'] += 1
-            return 2
-
-        class Worker:
-            signal = LinkRaidRecoveryTests.Signal()
-
-            @staticmethod
-            def _running():
-                return state['successes'] == 0
-
-            @staticmethod
-            def _wait(_seconds):
-                return False
-
-            @staticmethod
-            def _emit_log(_message, _level):
-                pass
-
-            @staticmethod
-            def _finish():
-                pass
-
-        with patch.object(link_raid.click_action, 'find_item_with_result',
-                          return_value=2), \
-                patch.object(link_raid.click_action, 'click_item_with_result',
-                             side_effect=click_item), \
-                patch.object(link_raid.click_action, 'move_a_to_b_scaled',
-                             return_value=2) as scroll, \
-                patch.object(link_raid.click_action, 'move_position_scaled',
-                             return_value=2) as move_away:
-            link_raid.LinkRaidWorker.like_battle_result(Worker())
-
-        self.assertEqual(state, {'calls': 3, 'successes': 1})
-        scroll.assert_called_once()
-        move_away.assert_called_once()
-
 
 class ScalerManifestTests(unittest.TestCase):
     def test_failed_regeneration_preserves_old_manifest_record(self):

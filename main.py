@@ -41,20 +41,34 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QRadioBu
                                QPlainTextEdit, QWidget, QPushButton, QLabel, QLineEdit,
                                QComboBox, QSizePolicy, QStackedWidget, QVBoxLayout,
                                QMessageBox, QProgressDialog, QCheckBox, QGroupBox,
-                               QDialog, QDialogButtonBox, QFormLayout, QSpinBox)
+                               QDialog, QDialogButtonBox, QFormLayout, QSpinBox,
+                               QListWidget, QListWidgetItem, QGridLayout,
+                               QScrollArea, QFrame)
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QIcon, QIntValidator, QTextCursor
 
 #其他自己写的文件
 from src.packs import language_switcher, image_scaler
-from src.core.app_settings import (GUI_LOG_LEVELS, load_automation_mode, load_log_level,
-                                   load_log_retention_days, save_automation_mode,
-                                   save_log_level, save_log_retention_days)
+from src.core.app_settings import (GUI_LOG_LEVELS, MAX_SERVERCHAN_CHANNELS,
+                                   load_automation_mode, load_log_level,
+                                   load_log_retention_days, load_notification_settings,
+                                   load_worker_params,
+                                   save_automation_mode, save_log_level,
+                                   save_log_retention_days, save_notification_settings,
+                                   save_worker_params)
 from src.core.log_fold import ConsecutiveLogFolder
+from src.core.notification import (NOTIFICATION_EVENTS, SERVERCHAN_CHANNELS,
+                                   NotificationManager, valid_send_key)
 
 logger = logging.getLogger(__name__)
 runtime_logger = logging.getLogger('magia.runtime')
 GUI_LOG_MAX_LINES = 500
+
+
+def _notify_if_available(owner, event_key, mode, reason, params=None):
+    handler = getattr(owner, '_notify_major_event', None)
+    if handler is not None:
+        handler(event_key, mode, reason, params)
 
 
 class GuiLogHandler(logging.Handler):
@@ -86,12 +100,16 @@ class CurrentPageStack(QStackedWidget):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, initial_log_level, retention_days, beta_checked, parent=None):
+    notificationChanged = Signal(object)
+
+    def __init__(self, initial_log_level, retention_days, beta_checked,
+                 notification_settings, parent=None):
         super().__init__(parent)
         self.setObjectName('settingsDialog')
         self.setWindowTitle('设置')
         self.setModal(True)
-        self.setMinimumWidth(360)
+        self.setMinimumSize(420, 480)
+        self.resize(520, 660)
 
         self.logLevelCombo = QComboBox()
         self.logLevelCombo.addItems(GUI_LOG_LEVELS)
@@ -113,6 +131,46 @@ class SettingsDialog(QDialog):
         self.cleanLogsBtn = QPushButton('清理过时日志')
         self.cleanLogsBtn.setToolTip('删除此前会话的 Magia 日志，保留当前会话日志')
 
+        self.notificationEnableCheckBox = QCheckBox('启用 Server酱 通知')
+        self.notificationEnableCheckBox.setChecked(notification_settings['enabled'])
+        self.sendKeyEdit = QLineEdit(notification_settings['send_key'])
+        self.sendKeyEdit.setEchoMode(QLineEdit.Password)
+        self.sendKeyEdit.setPlaceholderText('SCT 开头的 SendKey')
+        self.sendKeyEdit.setToolTip('SendKey 仅明文保存在本机 settings.json，不会写入日志')
+
+        self.channelChecks = {}
+        channels_layout = QGridLayout()
+        channels_layout.setHorizontalSpacing(12)
+        channels_layout.setVerticalSpacing(6)
+        selected_channels = set(notification_settings['channels'])
+        for index, (channel_id, label) in enumerate(SERVERCHAN_CHANNELS):
+            checkbox = QCheckBox(label)
+            checkbox.setChecked(channel_id in selected_channels)
+            self.channelChecks[channel_id] = checkbox
+            channels_layout.addWidget(checkbox, index // 2, index % 2)
+        channels_label = QLabel(f'推送通道（最多 {MAX_SERVERCHAN_CHANNELS} 个）')
+        channels_label.setToolTip('通道需先在 Server酱官网完成绑定')
+        channels_widget = QWidget()
+        channels_widget.setLayout(channels_layout)
+
+        self.eventChecks = {}
+        events_layout = QVBoxLayout()
+        events_layout.setSpacing(5)
+        for event_key, label in NOTIFICATION_EVENTS:
+            checkbox = QCheckBox(label)
+            checkbox.setChecked(notification_settings['events'][event_key])
+            self.eventChecks[event_key] = checkbox
+            events_layout.addWidget(checkbox)
+        events_label = QLabel('重大事件')
+        events_widget = QWidget()
+        events_widget.setLayout(events_layout)
+
+        self.testNotificationBtn = QPushButton('发送测试通知')
+        self.notificationStatusLabel = QLabel()
+        self.notificationStatusLabel.setObjectName('secondaryText')
+        self.notificationStatusLabel.setWordWrap(True)
+        self._notification_test_running = False
+
         form = QFormLayout()
         form.setHorizontalSpacing(14)
         form.setVerticalSpacing(12)
@@ -124,17 +182,115 @@ class SettingsDialog(QDialog):
         buttons.button(QDialogButtonBox.Close).setText('关闭')
         buttons.rejected.connect(self.reject)
 
-        layout = QVBoxLayout()
-        layout.setContentsMargins(18, 18, 18, 16)
-        layout.setSpacing(14)
-        layout.addLayout(form)
+        content_widget = QWidget()
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(14, 12, 14, 12)
+        content_layout.setSpacing(14)
+        content_layout.addLayout(form)
         action_row = QHBoxLayout()
         action_row.setSpacing(10)
         action_row.addWidget(self.cleanLogsBtn)
         action_row.addWidget(self.checkUpdateBtn)
-        layout.addLayout(action_row)
+        content_layout.addLayout(action_row)
+
+        notification_group = QGroupBox('通知设置')
+        notification_layout = QVBoxLayout()
+        notification_layout.setSpacing(9)
+        notification_layout.addWidget(self.notificationEnableCheckBox)
+        send_key_form = QFormLayout()
+        send_key_form.addRow('SendKey', self.sendKeyEdit)
+        notification_layout.addLayout(send_key_form)
+        notification_layout.addWidget(channels_label)
+        notification_layout.addWidget(channels_widget)
+        notification_layout.addWidget(events_label)
+        notification_layout.addWidget(events_widget)
+        test_row = QHBoxLayout()
+        test_row.addWidget(self.testNotificationBtn)
+        test_row.addWidget(self.notificationStatusLabel, 1)
+        notification_layout.addLayout(test_row)
+        notification_group.setLayout(notification_layout)
+        content_layout.addWidget(notification_group)
+        content_layout.addStretch(1)
+        content_widget.setLayout(content_layout)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setWidget(content_widget)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(4, 4, 4, 12)
+        layout.setSpacing(8)
+        layout.addWidget(scroll_area, 1)
         layout.addWidget(buttons)
         self.setLayout(layout)
+
+        self.notificationEnableCheckBox.toggled.connect(self._emit_notification_settings)
+        self.sendKeyEdit.textChanged.connect(self._emit_notification_settings)
+        for checkbox in self.channelChecks.values():
+            checkbox.toggled.connect(
+                lambda checked, current=checkbox: self._channel_toggled(current, checked)
+            )
+        for checkbox in self.eventChecks.values():
+            checkbox.toggled.connect(self._emit_notification_settings)
+        self._refresh_notification_status()
+
+    def notification_settings(self):
+        return {
+            'enabled': self.notificationEnableCheckBox.isChecked(),
+            'send_key': self.sendKeyEdit.text().strip(),
+            'channels': [
+                channel_id for channel_id, checkbox in self.channelChecks.items()
+                if checkbox.isChecked()
+            ],
+            'events': {
+                event_key: checkbox.isChecked()
+                for event_key, checkbox in self.eventChecks.items()
+            },
+        }
+
+    def _channel_toggled(self, checkbox, checked):
+        selected_count = sum(
+            item.isChecked() for item in self.channelChecks.values()
+        )
+        message = ''
+        if checked and selected_count > MAX_SERVERCHAN_CHANNELS:
+            checkbox.blockSignals(True)
+            checkbox.setChecked(False)
+            checkbox.blockSignals(False)
+            message = f'最多选择 {MAX_SERVERCHAN_CHANNELS} 个推送通道。'
+        elif not checked and selected_count == 0:
+            checkbox.blockSignals(True)
+            checkbox.setChecked(True)
+            checkbox.blockSignals(False)
+            message = '至少选择一个推送通道。'
+        self._emit_notification_settings()
+        if message:
+            self.notificationStatusLabel.setText(message)
+
+    def _emit_notification_settings(self, *_args):
+        self._refresh_notification_status()
+        self.notificationChanged.emit(self.notification_settings())
+
+    def _refresh_notification_status(self):
+        settings = self.notification_settings()
+        valid = valid_send_key(settings['send_key']) and bool(settings['channels'])
+        self.testNotificationBtn.setEnabled(valid and not self._notification_test_running)
+        if not settings['enabled']:
+            self.notificationStatusLabel.setText('通知默认关闭；测试按钮不受总开关限制。')
+        elif not valid_send_key(settings['send_key']):
+            self.notificationStatusLabel.setText('请填写有效的 SCT SendKey。')
+        else:
+            self.notificationStatusLabel.setText('通知配置有效。')
+
+    def set_notification_test_state(self, running, message=''):
+        self._notification_test_running = bool(running)
+        self.testNotificationBtn.setEnabled(
+            not running and valid_send_key(self.sendKeyEdit.text().strip())
+            and any(item.isChecked() for item in self.channelChecks.values())
+        )
+        if message:
+            self.notificationStatusLabel.setText(message)
 
 
 def get_worker_registry():
@@ -361,6 +517,7 @@ class mywindow(QWidget):
     updateProgress = Signal(str, int, int)
     updateReady = Signal(str, object)
     updateFailed = Signal(str, str)
+    notificationTested = Signal(bool, str)
     debugLog = Signal(str, str, str, str)
     def __init__(self):
         super().__init__()
@@ -380,6 +537,7 @@ class mywindow(QWidget):
         self._startup_template_refresh_pending = False
         self._log_scroll_pending = False
         self._gui_log_folder = ConsecutiveLogFolder()
+        self._notification_manager = NotificationManager(load_notification_settings())
 
         #启动时确保 aim 联接可用（aim 被移走时按 config 或第一个可用 pack 自动恢复）
         language_switcher.ensure_active()
@@ -437,7 +595,7 @@ class mywindow(QWidget):
         from src.update.update_check import VERSION, is_prerelease_version
         self.settingsDialog = SettingsDialog(
             initial_log_level, load_log_retention_days(),
-            is_prerelease_version(VERSION), self,
+            is_prerelease_version(VERSION), load_notification_settings(), self,
         )
         self.logLevelCombo = self.settingsDialog.logLevelCombo
         self.betaCheckBox = self.settingsDialog.betaCheckBox
@@ -451,6 +609,13 @@ class mywindow(QWidget):
         self.cleanLogsBtn.clicked.connect(self._cleanup_old_logs)
         self.logLevelCombo.currentTextChanged.connect(self._change_log_level)
         self.retentionSpin.valueChanged.connect(self._change_log_retention_days)
+        self.settingsDialog.notificationChanged.connect(
+            self._notification_settings_changed
+        )
+        self.settingsDialog.testNotificationBtn.clicked.connect(
+            self._send_test_notification
+        )
+        self.notificationTested.connect(self._on_notification_tested)
         self.updateChecked.connect(self._on_update_checked)
         self.updateProgress.connect(self._on_update_progress)
         self.updateReady.connect(self._on_update_ready)
@@ -574,6 +739,10 @@ class mywindow(QWidget):
         worker = meta.worker_class()
         worker.signal.connect(self._append_log)
         worker.logSignal.connect(self._append_log)
+        worker.majorEvent.connect(
+            lambda event_key, reason, params, mode=meta.name:
+            self._notify_major_event(event_key, mode, reason, params)
+        )
         display_name = meta.name.replace('_', ' ')
         worker.finished.connect(lambda n=display_name: logger.info('%s挂机结束', n))
         worker.finished.connect(lambda n=display_name: self._append_log(f'{n}挂机结束或被主动停止\n'))
@@ -584,12 +753,19 @@ class mywindow(QWidget):
         param_layout.setContentsMargins(0, 0, 0, 0)
         param_layout.setSpacing(8)
         getters = {}
+        settings_getters = {}
         controls = []
+        change_connectors = []
+        saved_params = load_worker_params(meta.name)
         for spec in meta.params:
-            sub_layout, getter, sub_controls = self._build_param_widget(spec)
+            initial_value = spec.normalize(saved_params.get(spec.key, spec.default))
+            sub_layout, getter, settings_getter, sub_controls, connect_change = \
+                self._build_param_widget(spec, initial_value)
             param_layout.addLayout(sub_layout)
             getters[spec.key] = getter
+            settings_getters[spec.key] = settings_getter
             controls.extend(sub_controls)
+            change_connectors.append(connect_change)
 
         param_widget = QWidget()
         if not meta.params:
@@ -600,9 +776,22 @@ class mywindow(QWidget):
             'worker': worker,
             'param_widget': param_widget,
             'getters': getters,
+            'settings_getters': settings_getters,
             'controls': controls,
         }
+        for connect_change in change_connectors:
+            connect_change(lambda e=entry: self._save_worker_params(e))
         return entry
+
+    def _save_worker_params(self, entry):
+        try:
+            params = {
+                key: getter() for key, getter in entry['settings_getters'].items()
+            }
+        except (TypeError, ValueError):
+            return
+        if not save_worker_params(entry['meta'].name, params):
+            logger.warning('保存 %s 挂机参数失败', entry['meta'].name)
 
     def _script_changed(self, index):
         if not 0 <= index < len(self._entries):
@@ -633,6 +822,38 @@ class mywindow(QWidget):
 
     def _check_update(self):
         self._check_update_async(manual=True)
+
+    def _notification_settings_changed(self, settings):
+        self._notification_manager.configure(settings)
+        if not save_notification_settings(settings):
+            logger.warning('保存通知设置失败')
+
+    def _send_test_notification(self):
+        settings = self.settingsDialog.notification_settings()
+        self._notification_manager.configure(settings)
+        self.settingsDialog.set_notification_test_state(True, '正在发送测试通知...')
+        self._notification_manager.send_test(
+            self._emit_notification_test_result
+        )
+
+    def _emit_notification_test_result(self, success, message):
+        try:
+            self.notificationTested.emit(success, message)
+        except RuntimeError:
+            pass
+
+    def _on_notification_tested(self, success, message):
+        if self._closing:
+            return
+        self.settingsDialog.set_notification_test_state(False, message)
+        self._append_log(
+            message,
+            level='INFO' if success else 'WARNING',
+            source='通知',
+        )
+
+    def _notify_major_event(self, event_key, mode, reason, params=None):
+        self._notification_manager.notify(event_key, mode, reason, params)
 
     def _check_update_async(self, manual=False):
         #后台线程查 GitHub 最新发布版本，避免阻塞界面；同时只允许一个检查在跑
@@ -671,12 +892,19 @@ class mywindow(QWidget):
         self._refresh_control_state()
         if not isinstance(r, dict):
             self._append_log(str(r), level='ERROR', source='更新')
+            _notify_if_available(
+                self, 'update_failed', '应用更新', '更新检查返回了无效结果。'
+            )
             self._continue_startup_after_update()
             return
         message = r.get('message', '')
         error_prefixes = ('查询更新失败：', '检查更新出错：', '本地版本号无法解析：')
         level = 'ERROR' if message.startswith(error_prefixes) else 'INFO'
         self._append_log(message, level=level, source='更新')
+        if level == 'ERROR':
+            _notify_if_available(
+                self, 'update_failed', '应用更新', message or '更新检查失败。'
+            )
         if r.get('has_update'):
             self._offer_update(r)
         self._continue_startup_after_update()
@@ -709,6 +937,10 @@ class mywindow(QWidget):
                 'Release 未提供唯一且带 SHA-256 的更新 ZIP，已禁用自动安装。',
                 level='ERROR', source='更新',
             )
+            _notify_if_available(
+                self, 'update_failed', '应用更新',
+                'Release 未提供唯一且带 SHA-256 的更新 ZIP。',
+            )
             if self._update_manual:
                 webbrowser.open(url)
             return
@@ -730,6 +962,9 @@ class mywindow(QWidget):
                 self._start_download(r)
             except Exception as e:
                 self._append_log(f'无法开始更新：{e}', level='ERROR', source='更新')
+                _notify_if_available(
+                    self, 'update_failed', '应用更新', '无法开始准备更新。'
+                )
                 self._reset_update_state(cleanup=True)
 
     def _start_download(self, r):
@@ -829,6 +1064,10 @@ class mywindow(QWidget):
             msg if cancelled else f'更新失败：{msg}',
             level='WARNING' if cancelled else 'ERROR', source='更新',
         )
+        if not cancelled:
+            _notify_if_available(
+                self, 'update_failed', '应用更新', msg or '更新准备失败。'
+            )
         self._reset_update_state(cleanup=False)
         self._continue_startup_after_update()
 
@@ -963,14 +1202,19 @@ class mywindow(QWidget):
                 level='WARNING', source='日志',
             )
 
-    def _build_param_widget(self, spec):
-        #根据 ParamSpec.kind 生成对应控件，返回 (QLayout, getter函数, 可禁用控件列表)
+    def _build_param_widget(self, spec, initial_value=None):
+        #返回布局、Worker getter、持久化 getter、可禁用控件和变更信号连接器。
+        initial_value = spec.normalize(
+            spec.default if initial_value is None else initial_value
+        )
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-        label = QLabel(spec.label)
-        layout.addWidget(label)
-        controls = [label]
+        controls = []
+        if spec.kind != 'bool':
+            label = QLabel(spec.label)
+            layout.addWidget(label)
+            controls.append(label)
 
         if spec.kind == 'choice':
             #单选按钮组，每 4 个一行
@@ -979,7 +1223,7 @@ class mywindow(QWidget):
             buttons = []
             for val in spec.choices:
                 btn = QRadioButton(str(val))
-                if val == spec.default:
+                if val == initial_value:
                     btn.setChecked(True)
                 group.addButton(btn)
                 buttons.append(btn)
@@ -996,13 +1240,108 @@ class mywindow(QWidget):
                 for btn, val in choice_pairs:
                     if btn.isChecked():
                         return val
-                return spec.default
+                return initial_value
+            settings_getter = getter
+            def connect_change(callback):
+                group.buttonToggled.connect(
+                    lambda _button, checked: callback() if checked else None
+                )
             controls.extend(buttons)
+
+        elif spec.kind == 'ordered_multi_choice':
+            selected = list(initial_value)
+            values = selected + [value for value in spec.choices if value not in selected]
+            choice_list = QListWidget()
+            choice_list.setMaximumHeight(170)
+            for value in values:
+                item = QListWidgetItem(f'LV{value}')
+                item.setData(Qt.UserRole, value)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Checked if value in selected else Qt.Unchecked)
+                choice_list.addItem(item)
+            choice_list.setCurrentRow(0)
+
+            up_button = QPushButton('↑')
+            down_button = QPushButton('↓')
+            up_button.setToolTip('提高当前等级的优先级')
+            down_button.setToolTip('降低当前等级的优先级')
+            up_button.setFixedWidth(40)
+            down_button.setFixedWidth(40)
+
+            def checked_values():
+                return [
+                    choice_list.item(index).data(Qt.UserRole)
+                    for index in range(choice_list.count())
+                    if choice_list.item(index).checkState() == Qt.Checked
+                ]
+
+            def keep_one_selected(item):
+                if item.checkState() == Qt.Unchecked and not checked_values():
+                    choice_list.blockSignals(True)
+                    item.setCheckState(Qt.Checked)
+                    choice_list.blockSignals(False)
+                    return
+                row = choice_list.row(item)
+                selected_count = len(checked_values())
+                target = selected_count - 1 if item.checkState() == Qt.Checked \
+                    else choice_list.count() - 1
+                if row != target:
+                    choice_list.blockSignals(True)
+                    moved_item = choice_list.takeItem(row)
+                    choice_list.insertItem(target, moved_item)
+                    choice_list.setCurrentItem(moved_item)
+                    choice_list.blockSignals(False)
+
+            def move_current(delta):
+                row = choice_list.currentRow()
+                target = row + delta
+                item = choice_list.item(row) if row >= 0 else None
+                if item is None or item.checkState() != Qt.Checked \
+                        or not 0 <= target < len(checked_values()):
+                    return
+                moved_item = choice_list.takeItem(row)
+                choice_list.insertItem(target, moved_item)
+                choice_list.setCurrentItem(moved_item)
+
+            choice_list.itemChanged.connect(keep_one_selected)
+            up_button.clicked.connect(lambda: move_current(-1))
+            down_button.clicked.connect(lambda: move_current(1))
+            layout.addWidget(choice_list)
+            button_row = QHBoxLayout()
+            button_row.addStretch(1)
+            button_row.addWidget(up_button)
+            button_row.addWidget(down_button)
+            layout.addLayout(button_row)
+
+            def getter():
+                values = checked_values()
+                if not values:
+                    raise ValueError(f'{spec.label} 至少选择一个等级。')
+                return values
+            settings_getter = getter
+            def connect_change(callback):
+                choice_list.itemChanged.connect(lambda _item: callback())
+                up_button.clicked.connect(callback)
+                down_button.clicked.connect(callback)
+            controls.extend([choice_list, up_button, down_button])
+
+        elif spec.kind == 'bool':
+            checkbox = QCheckBox(spec.label)
+            checkbox.setChecked(initial_value)
+            if spec.hint:
+                checkbox.setToolTip(spec.hint)
+            layout.addWidget(checkbox)
+            def getter():
+                return checkbox.isChecked()
+            settings_getter = getter
+            def connect_change(callback):
+                checkbox.toggled.connect(lambda _checked: callback())
+            controls.append(checkbox)
 
         elif spec.kind == 'lp_recover':
             #喝体力药次数：最小/-1/输入/+1/最大 五件套；显示的是"喝几次"，传给 worker 时 +1
             min_btn, minus_btn, input_edit, plus_btn, max_btn = self.create_lp_recover_input(
-                min_num=spec.min, max_num=spec.max, default_num=spec.default,
+                min_num=spec.min, max_num=spec.max, default_num=initial_value,
             )
             row = QHBoxLayout()
             row.addWidget(min_btn)
@@ -1020,10 +1359,19 @@ class mywindow(QWidget):
                 if not lo <= value <= hi:
                     raise ValueError(f'{spec.label} 超出范围。')
                 return value + 1  #显示值 +1 = 存储值
+            def settings_getter():
+                text = input_edit.text()
+                if not input_edit.hasAcceptableInput() or text == '':
+                    raise ValueError
+                return int(text)
+            def connect_change(callback):
+                for button in (min_btn, minus_btn, plus_btn, max_btn):
+                    button.clicked.connect(callback)
+                input_edit.editingFinished.connect(callback)
             controls.extend([min_btn, minus_btn, input_edit, plus_btn, max_btn])
 
         elif spec.kind == 'int':
-            input_edit = QLineEdit(str(spec.default))
+            input_edit = QLineEdit(str(initial_value))
             input_edit.setValidator(QIntValidator(spec.min, spec.max, self))
             input_edit.setAlignment(Qt.AlignCenter)
             layout.addWidget(input_edit)
@@ -1033,12 +1381,22 @@ class mywindow(QWidget):
                 if not input_edit.hasAcceptableInput() or text == '':
                     raise ValueError(f'{spec.label} 输入无效，请输入 {lo} 到 {hi} 的整数。')
                 return int(text)
+            settings_getter = getter
+            def connect_change(callback):
+                input_edit.editingFinished.connect(callback)
             controls.append(input_edit)
 
         else:
             raise ValueError(f'不支持的参数控件类型: {spec.kind}')
 
-        return layout, getter, controls
+        if spec.hint and spec.kind != 'bool':
+            hint = QLabel(spec.hint)
+            hint.setObjectName('secondaryText')
+            hint.setWordWrap(True)
+            layout.addWidget(hint)
+            controls.append(hint)
+
+        return layout, getter, settings_getter, controls, connect_change
 
     def create_lp_recover_input(self, min_num, max_num, default_num):
         #喝药次数的五件套输入控件。值由调用方用 getter 读取，不再需要 change_func 回调。
@@ -1193,6 +1551,9 @@ class mywindow(QWidget):
                 self._apply_update(self._pending_update)
             except Exception as e:
                 self._append_log(f'启动更新安装器失败：{e}', level='ERROR', source='更新')
+                _notify_if_available(
+                    self, 'update_failed', '应用更新', '启动更新安装器失败。'
+                )
                 self._closing = False
                 self._reset_update_state(cleanup=True)
                 self._continue_startup_after_update()
@@ -1229,6 +1590,10 @@ class mywindow(QWidget):
                 f'检测到上次更新回滚不完整，已禁止挂机。请按文件提示恢复：{recovery}',
                 level='CRITICAL', source='更新',
             )
+            _notify_if_available(
+                self, 'update_recovery_blocked', entry['meta'].name,
+                '检测到上次更新未安全完成，已禁止启动挂机。',
+            )
             return
         from src.click import click_behavior, click_action, template_confidence
         if click_behavior.find_win('MadokaExedra') is None:
@@ -1264,10 +1629,13 @@ class mywindow(QWidget):
         if selection is None:
             self._append_log('当前没有有效的模板 pack，本次挂机未启动。', level='ERROR')
             return
-        #先读取参数，动态模板路径（如 lv{level_choice}）才能只校验当前选择。
+        #先读取参数，动态模板路径才能按当前设置展开后再校验。
         worker = entry['worker']
         try:
             params = {key: getter() for key, getter in entry['getters'].items()}
+            notification_params = {
+                key: getter() for key, getter in entry['settings_getters'].items()
+            }
             required_templates = [
                 path.format(**params) for path in entry['meta'].required_templates
             ]
@@ -1293,9 +1661,10 @@ class mywindow(QWidget):
                 level='ERROR',
             )
             return
-        #注入已校验参数（lp_recover 已在 getter 里 +1 为存储值）
+        #注入已校验参数（lp_recover 已在 getter 里由界面值 +1 转为 Worker 内部值）
         for key, value in params.items():
             setattr(worker, key, value)
+        worker._notification_params = notification_params
         worker.expected_pack = selection
         if entry['meta'].start_hint:
             self._append_log(entry['meta'].start_hint)

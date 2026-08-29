@@ -49,7 +49,6 @@ quests/link_raid/backup_requests/battle/tap_to_countinue_2.png = 0.80
 quests/link_raid/backup_requests/battle/tap_to_countinue_3.png = 0.80
 quests/link_raid/backup_requests/battle/tap_to_countinue_4.png = 0.80
 quests/link_raid/backup_requests/battle/back_1.png = 0.80
-quests/link_raid/backup_requests/battle/love_1.png = 0.80
 quests/link_raid/backup_requests/lv/lv4/lv4_1.png = 0.80
 quests/link_raid/backup_requests/lv/lv6/lv6_1.png = 0.80
 quests/link_raid/backup_requests/lv/lv7/lv7_1.png = 0.80

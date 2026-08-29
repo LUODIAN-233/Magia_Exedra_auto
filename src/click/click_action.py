@@ -75,7 +75,8 @@ def _competing_match_accepted(detected, selected, selection):
         return False
     full_threshold = template_confidence.threshold_for(path, selection)
     text_threshold = template_confidence.threshold_for(text_path, selection)
-    return label == selected and text_label == selected and point is not None \
+    selected_values = tuple(selected) if isinstance(selected, (list, tuple)) else (selected,)
+    return label == text_label and label in selected_values and point is not None \
         and full_threshold is not None and text_threshold is not None \
         and score > full_threshold and text_score > text_threshold
 
@@ -106,12 +107,13 @@ def _click_stability_radius():
     return max(CLICK_STABILITY_MIN_RADIUS, round(min(size) * CLICK_STABILITY_RATIO))
 
 
-def _confirm_stable_detection(self, detect_once, accepted, position, name):
+def _confirm_stable_detection(self, detect_once, accepted, position, name, identity=None):
     """要求目标在 0.6 秒内三次采样都命中同一区域，确认期间不移动鼠标。"""
     can_continue = getattr(self, '_running', None)
     radius = _click_stability_radius()
     samples = []
     reference = None
+    reference_identity = None
     for index in range(CLICK_CONFIRM_SAMPLES):
         if can_continue is not None and not can_continue():
             return None
@@ -125,6 +127,11 @@ def _confirm_stable_detection(self, detect_once, accepted, position, name):
             return None
         if reference is None:
             reference = point
+            reference_identity = identity(detected) if identity is not None else None
+        elif identity is not None and identity(detected) != reference_identity:
+            logger.debug('%s稳定性确认失败：第%d/%d次采样候选身份发生变化',
+                         name, index + 1, CLICK_CONFIRM_SAMPLES)
+            return None
         elif max(abs(point[0] - reference[0]), abs(point[1] - reference[1])) > radius:
             logger.debug('%s稳定性确认失败：第%d/%d次采样位置%s偏离首次%s超过%dpx',
                          name, index + 1, CLICK_CONFIRM_SAMPLES, point, reference, radius)
@@ -347,28 +354,27 @@ def find_first_item_with_result(self, items):
 
 
 def _best_accepted_competing_detection(selected, groups, selection, search_region=None,
-                                       skip_crowded=False, name=''):
+                                       skip_participant_counts=(), name=''):
     matches = click_behavior.best_competing_template_matches(
         selected, groups, search_region=search_region,
     )
     for detected in matches:
         if not _competing_match_accepted(detected, selected, selection):
             continue
-        if skip_crowded:
-            crowded_status = click_behavior.participant_count_crowded_near(detected[2])
-            if crowded_status is not False:
-                if crowded_status is True:
-                    logger.info('%s候选条目参加人数为 9/10 或 10/10，跳过: %s',
-                                name, detected[2])
-                else:
-                    logger.warning('%s候选条目参加人数无法确认，安全跳过: %s', name, detected[2])
-                continue
+        participant_count = click_behavior.participant_count_near(detected[2])
+        if participant_count in skip_participant_counts:
+            logger.info('%s候选条目参加人数为 %s/10，按设置跳过: %s',
+                        name, participant_count, detected[2])
+            continue
+        if participant_count is None:
+            logger.info('%s候选条目参加人数无法确认，按设置允许尝试加入: %s',
+                        name, detected[2])
         return detected
     return None, None, None, 0.0, 0.0, None, None
 
 
 def click_competing_item_with_result(self, selected, pictures, name, search_region=None,
-                                    skip_crowded=False):
+                                    skip_participant_counts=()):
     groups = {key: _template_files(picture) for key, picture in pictures.items()}
     can_click = getattr(self, '_running', None)
     selection = _template_selection(self)
@@ -379,11 +385,12 @@ def click_competing_item_with_result(self, selected, pictures, name, search_regi
     confirmed = _confirm_stable_detection(
         self,
         lambda: _best_accepted_competing_detection(
-            selected, groups, selection, search_region, skip_crowded, name,
+            selected, groups, selection, search_region, skip_participant_counts, name,
         ),
         lambda detected: _competing_match_accepted(detected, selected, selection),
         lambda detected: detected[2],
         name,
+        identity=lambda detected: detected[0],
     )
     if confirmed is None:
         logger.debug('竞争识别%s未通过0.6秒三次采样稳定性确认', name)
@@ -407,7 +414,7 @@ def click_competing_item_with_result(self, selected, pictures, name, search_regi
 
 
 def find_competing_item_with_result(self, selected, pictures, name, search_region=None,
-                                   skip_crowded=False):
+                                   skip_participant_counts=()):
     groups = {key: _template_files(picture) for key, picture in pictures.items()}
     can_find = getattr(self, '_running', None)
     selection = _template_selection(self)
@@ -417,7 +424,7 @@ def find_competing_item_with_result(self, selected, pictures, name, search_regio
         return 1
     label, text_label, _avg, score, text_score, path, text_path = \
         _best_accepted_competing_detection(
-            selected, groups, selection, search_region, skip_crowded, name,
+            selected, groups, selection, search_region, skip_participant_counts, name,
         )
     detected = (label, text_label, _avg, score, text_score, path, text_path)
     found = _competing_match_accepted(detected, selected, selection)

@@ -1,7 +1,7 @@
 #Link Raid 挂机工作线程
 #从 main.py 的 WorkThread_1 迁移而来，流程逻辑完全不变：
-#  主界面 -> backup_requests -> 刷新 -> 找等级 -> join -> 战斗 -> 点赞 -> back 循环。
-#GUI 只负责构造本线程、设置参数（level_choice / lp_recover_times）和启动/停止。
+#  主界面 -> backup_requests -> 刷新 -> 找等级 -> join -> 战斗 -> back 循环。
+#GUI 只负责构造本线程、设置参数（等级优先级、人数策略、体力恢复）和启动/停止。
 #
 #原来对全局 guaji_1 / stop_event_1 的判断，统一替换为基类的 self._running() / self._wait()：
 #  guaji_1 == 1            -> self._running()
@@ -12,7 +12,7 @@ import time
 import logging
 
 from src.click import click_action
-from .base import BaseWorker, BATTLE_TIMEOUT, retry_until
+from .base import BaseWorker, BATTLE_TIMEOUT
 from .registry import register, ParamSpec
 
 logger = logging.getLogger(__name__)
@@ -23,11 +23,9 @@ SCROLL_SETTLE_DELAY = 1.0
 TAP_TO_CONTINUE_POSITION_2K = (1280, 1367)
 TAP_TO_CONTINUE_FOREGROUND_VARIANTS = (1, 2)
 TAP_TO_CONTINUE_MAX_CLICKS = 2
-LIKE_SCROLL_SETTLE_DELAY = 1.0
-LIKE_RETRY_TIMEOUT = 3.0
-LIKE_NEUTRAL_MOUSE_POSITION_2K = (1280, 120)
 BATTLE_STATE_POLL_INTERVAL = 0.5
 REFRESH_MIN_CLICK_INTERVAL = 4.5
+SUPPORTED_LEVELS = (4, 6, 7, 8, 9, 10, 11, 12)
 
 
 @register(
@@ -35,11 +33,24 @@ REFRESH_MIN_CLICK_INTERVAL = 4.5
     'link raid挂机启动',
     params=[
         ParamSpec(
-            'level_choice',
-            'link raid挂机部分\n选择link raid要挂机的等级',
-            kind='choice',
-            choices=[4, 6, 7, 8, 9, 10, 11, 12],
-            default=6,
+            'level_choices',
+            'Link Raid 等级与优先级（从上到下）',
+            kind='ordered_multi_choice',
+            choices=list(SUPPORTED_LEVELS),
+            default=[6],
+            hint='勾选一个或多个等级，选中条目后使用箭头调整优先级。',
+        ),
+        ParamSpec(
+            'skip_nine_rooms',
+            '跳过 9/10 房间',
+            kind='bool',
+            default=True,
+        ),
+        ParamSpec(
+            'skip_ten_rooms',
+            '跳过 10/10 房间',
+            kind='bool',
+            default=True,
         ),
         ParamSpec(
             'lp_recover_times',
@@ -82,11 +93,14 @@ REFRESH_MIN_CLICK_INTERVAL = 4.5
     ],
 )
 class LinkRaidWorker(BaseWorker):
-    def __init__(self, level=6, lp_recover_times=1):
+    def __init__(self, levels=None, lp_recover_times=1,
+                 skip_nine_rooms=True, skip_ten_rooms=True):
         super().__init__()
         logger.debug('LinkRaidWorker准备就绪')
-        #等级选择（lv4、lv6~lv12），GUI 启动前会重新赋值
-        self.level_choice = level
+        #等级按列表顺序表示优先级，GUI 启动前会重新赋值。
+        self.level_choices = list(levels or [6])
+        self.skip_nine_rooms = skip_nine_rooms
+        self.skip_ten_rooms = skip_ten_rooms
         #喝体力药次数，存储的是“显示次数+1”，1 表示不喝药；GUI 启动前会重新赋值
         self.lp_recover_times = lp_recover_times
         self._next_automation_input_at = 0.0
@@ -95,8 +109,16 @@ class LinkRaidWorker(BaseWorker):
         self._run_safely(self._run)
 
     def _run(self):
-        if isinstance(self.level_choice, bool) or self.level_choice not in (4, 6, 7, 8, 9, 10, 11, 12):
-            self._emit_log('Link Raid 等级参数无效，本次挂机已停止。', 'ERROR')
+        if not isinstance(self.level_choices, (list, tuple)) or not self.level_choices \
+                or len(set(self.level_choices)) != len(self.level_choices) \
+                or any(isinstance(level, bool) or level not in SUPPORTED_LEVELS
+                       for level in self.level_choices):
+            self._emit_log('Link Raid 等级优先级参数无效，本次挂机已停止。', 'ERROR')
+            return
+        self.level_choices = list(self.level_choices)
+        if not isinstance(self.skip_nine_rooms, bool) \
+                or not isinstance(self.skip_ten_rooms, bool):
+            self._emit_log('Link Raid 房间人数策略参数无效，本次挂机已停止。', 'ERROR')
             return
         if isinstance(self.lp_recover_times, bool) or not isinstance(self.lp_recover_times, int) \
                 or not 1 <= self.lp_recover_times <= 11:
@@ -117,7 +139,9 @@ class LinkRaidWorker(BaseWorker):
         self.already_end = 1
         self._next_automation_input_at = 0.0
         self.signal.emit(str('具体挂机参数为：'))
-        self.signal.emit(str(f'选择的等级是：{self.level_choice}'))
+        self.signal.emit('等级优先级：' + ' > '.join(f'LV{level}' for level in self.level_choices))
+        self.signal.emit(f'跳过 9/10 房间：{"是" if self.skip_nine_rooms else "否"}')
+        self.signal.emit(f'跳过 10/10 房间：{"是" if self.skip_ten_rooms else "否"}')
         self.signal.emit(str(f'喝体力药的次数是：{self.LP_full_add - 1}'))
         self.signal.emit(str('参数错误请及时暂停'))
         self.signal.emit(str('需要在游戏主界面启动本挂机系统'))
@@ -237,6 +261,11 @@ class LinkRaidWorker(BaseWorker):
                 result = self._refresh_battle_list()
 
         if self._running() and self.win_exist == 1:
+            self._emit_major_event(
+                'timeout',
+                '等待已结束的 Link Raid 战斗超时。',
+                {'超时秒数': BATTLE_TIMEOUT},
+            )
             self._emit_log('等待已结束战斗超时，已安全停止。', 'ERROR')
             self._finish()
             return
@@ -280,7 +309,6 @@ class LinkRaidWorker(BaseWorker):
             )
             if result == 2:
                 self.signal.emit(str('tap_to_countinue页面已推进'))
-                self.like_battle_result()
             if not self._running():
                 return
             result = 1
@@ -362,34 +390,41 @@ class LinkRaidWorker(BaseWorker):
     def _scan_lv(self):
         level_pictures = {
             level: f'./aim/quests/link_raid/backup_requests/lv/lv{level}/lv{level}'
-            for level in (4, 6, 7, 8, 9, 10, 11, 12)
+            for level in SUPPORTED_LEVELS
         }
+        selected_text = ' > '.join(f'LV{level}' for level in self.level_choices)
+        skip_counts = tuple(
+            count for count, should_skip in (
+                (9, self.skip_nine_rooms),
+                (10, self.skip_ten_rooms),
+            ) if should_skip
+        )
         found = click_action.find_competing_item_with_result(
-            self, self.level_choice, level_pictures, f'lv{self.level_choice}',
+            self, self.level_choices, level_pictures, selected_text,
             search_region=LEVEL_LIST_SEARCH_REGION,
-            skip_crowded=True,
+            skip_participant_counts=skip_counts,
         )
         if found == 2:
-            self.signal.emit(str(f'lv{self.level_choice}找到了，下一步是选择'))
+            self.signal.emit(f'已按优先级找到可加入等级（{selected_text}），下一步是选择')
             if not self._running():
                 return 1
             result = click_action.click_competing_item_with_result(
-                self, self.level_choice, level_pictures, f'lv{self.level_choice}',
+                self, self.level_choices, level_pictures, selected_text,
                 search_region=LEVEL_LIST_SEARCH_REGION,
-                skip_crowded=True,
+                skip_participant_counts=skip_counts,
             )
             if result == 2:
-                self.signal.emit(str(f'lv{self.level_choice}点击完成'))
+                self.signal.emit(f'已按优先级点击等级（{selected_text}）')
                 return 2
-            self._emit_log(f'lv{self.level_choice}点击失败，将刷新列表', 'WARNING')
+            self._emit_log(f'优先级等级点击失败（{selected_text}），将刷新列表', 'WARNING')
             return 1
         no_lv = click_action.find_item_with_result(
             self, './aim/quests/link_raid/backup_requests/lv/no_lv', 'no_lv'
         )
         if no_lv == 2:
-            self.signal.emit(str(f'当前列表无 lv{self.level_choice}（no_lv），将刷新救援列表'))
+            self.signal.emit(f'当前列表无已选等级（{selected_text}，no_lv），将刷新救援列表')
             return 1
-        self.signal.emit(str(f'未找到 lv{self.level_choice} 且未发现 no_lv，将下拉查找'))
+        self.signal.emit(f'未找到已选等级（{selected_text}）且未发现 no_lv，将下拉查找')
         return 0
 
     # 下拉前先额外复扫一次；仍未找到时只下拉一次并进行最后扫描。
@@ -398,17 +433,18 @@ class LinkRaidWorker(BaseWorker):
         r = self._scan_lv()
         if r != 0 or not self._running():
             return 1 if not self._running() else r
-        self.signal.emit(str(f'复扫仍未找到 lv{self.level_choice} 或 no_lv，执行一次下拉'))
+        selected_text = ' > '.join(f'LV{level}' for level in self.level_choices)
+        self.signal.emit(f'复扫仍未找到已选等级（{selected_text}）或 no_lv，执行一次下拉')
         moved = click_action.move_a_to_b_scaled(
             1400, 1200, 1400, 400, self._running,
         )
         if moved != 2 or self._wait(SCROLL_SETTLE_DELAY):
             return 1
-        self.signal.emit(str(f'下拉完成，最后查找一次 lv{self.level_choice}'))
+        self.signal.emit(f'下拉完成，最后查找一次已选等级（{selected_text}）')
         r = self._scan_lv()
         if r != 0:
             return r
-        self.signal.emit(str(f'单次下拉后仍未找到 lv{self.level_choice} 或 no_lv，将刷新救援列表'))
+        self.signal.emit(f'单次下拉后仍未找到已选等级（{selected_text}）或 no_lv，将刷新救援列表')
         return 1
 
     def join_battle(self):
@@ -490,6 +526,14 @@ class LinkRaidWorker(BaseWorker):
             self.LP_full_add = self.LP_full_add - 1
             self.signal.emit(str(f'剩余喝体力药的次数是{self.LP_full_add}，0就是不喝药了，结束挂机'))
             if self.LP_full_add == 0:  # 剩余喝药次数耗尽
+                self._emit_major_event(
+                    'lp_exhausted',
+                    'Link Raid 体力恢复次数已耗尽。',
+                    {
+                        '等级优先级': [f'LV{level}' for level in self.level_choices],
+                        '设定恢复次数': self.lp_recover_times - 1,
+                    },
+                )
                 self._finish()
                 return
             else:
@@ -586,6 +630,11 @@ class LinkRaidWorker(BaseWorker):
             )):
                 return None
         if self._running():
+            self._emit_major_event(
+                'timeout',
+                '等待 Link Raid 战斗结算或 already_end 超时。',
+                {'超时秒数': BATTLE_TIMEOUT},
+            )
             self._emit_log(
                 f'等待战斗结算或already_end超过{BATTLE_TIMEOUT}秒，已安全停止。'
                 '请检查游戏网络、模板语言和分辨率。',
@@ -613,73 +662,9 @@ class LinkRaidWorker(BaseWorker):
             if outcome != 'finished':
                 return
             self.signal.emit('tap_to_countinue页面已推进')
-            self.like_battle_result()
-            if not self._running():
-                return
             break
 
         # 点击结算界面的 back，点完后回到 boss 打脸的界面
         result = self._click_until('./aim/quests/link_raid/backup_requests/battle/back', 'back')
         if result == 2:
             self.signal.emit(str('back点击完成，一场战斗结束了'))
-
-    def like_battle_result(self):
-        # 等待 2 秒，防止延迟，该死的服务器
-        if self._wait(2):
-            return
-
-        # 等待 back 界面出现，然后开始点赞，这里通过找到最底下的 back 来判定是否可以点赞
-        wait_back = retry_until(
-            lambda: click_action.find_item_with_result(
-                self, './aim/quests/link_raid/backup_requests/battle/back', 'back'
-            ),
-            self._running,
-            wait=self._wait,
-        )
-        if wait_back == 2:
-            self.signal.emit(str('back已经可以看到，可以开始点赞'))
-        elif self._running():
-            self._emit_log('等待back超时，已安全停止。', 'ERROR')
-            self._finish()
-
-        # 点赞系统。最多点 9 下，点到不能点为止
-        love_time = 9
-        while self._running() and love_time > 0:
-            result = click_action.click_item_with_result(self, './aim/quests/link_raid/backup_requests/battle/love', 'love')
-            if result == 2:
-                self.signal.emit(str('love点击完成，点赞完成一次'))
-                love_time = love_time - 1
-            else:
-                self.signal.emit(str('love没有找到，可能是次数耗尽或者要下拉'))
-                if self._wait(0.5):
-                    return
-                if not self._running():
-                    return
-                moved = click_action.move_a_to_b_scaled(
-                    1400, 1000, 1400, 600, self._running,
-                )
-                if moved != 2:
-                    self._emit_log('点赞列表滑动失败，结束本页点赞。', 'WARNING')
-                    break
-                click_action.move_position_scaled(
-                    *LIKE_NEUTRAL_MOUSE_POSITION_2K, self._running,
-                )
-                self.signal.emit('点赞列表滑动完成，等待页面稳定后继续识别')
-                if self._wait(LIKE_SCROLL_SETTLE_DELAY):
-                    return
-                result = retry_until(
-                    lambda: click_action.click_item_with_result(
-                        self,
-                        './aim/quests/link_raid/backup_requests/battle/love',
-                        'love',
-                    ),
-                    self._running,
-                    timeout=LIKE_RETRY_TIMEOUT,
-                    wait=self._wait,
-                )
-                if result == 1:
-                    love_time = 0
-                    self.signal.emit(str('滑动后连续 3 秒未找到可点赞目标，本页点赞结束'))
-                else:
-                    love_time = love_time - 1
-                    self.signal.emit(str('滑动后已找到 love，点赞完成一次'))
