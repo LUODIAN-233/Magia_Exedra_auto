@@ -6,7 +6,7 @@
     <img alt="Platform" src="https://img.shields.io/badge/Platform-Windows-0078D4">
     <img alt="Architecture" src="https://img.shields.io/badge/Architecture-x86--64-555555">
     <img alt="GUI" src="https://img.shields.io/badge/GUI-PySide6-41CD52">
-    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.5.1" src="https://img.shields.io/badge/Release-2.5.1-2ea44f"></a>
+    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.5.2" src="https://img.shields.io/badge/Release-2.5.2-2ea44f"></a>
   </p>
   <p>
     <a href="./README.md">简体中文</a> · <a href="./README_EN.md">English</a> · <a href="./README_JP.md">日本語</a>
@@ -15,12 +15,9 @@
 
 ---
 
-## 2.5.1 changes
+## 2.5.2 changes
 
-- Rebuilt and verified the Windows package to replace the 2.5.0 build detected by a specific Windows Defender rule. The packaged EXE now passes a direct scan with the current Defender signatures.
-- Link Raid can select multiple levels and search by the user's priority order. Separate options control whether 9/10 and 10/10 rooms are skipped, while unreadable participant counts may be attempted.
-- The automation mode and every mode's parameters are saved immediately and restored on the next launch. Link Raid no longer performs the obsolete like action.
-- Server酱 major-event notifications now support a dedicated SendKey, one or two delivery channels, and individual event toggles. Background delivery retries and deduplicates events; manual stop and application close do not send an automatic-termination notification.
+- Fixed old installations retaining the removed `love_1.png`, which made template-confidence validation fail and blocked automation. Template refresh now removes that exact retired file from both source and derived packs while preserving other untracked files.
 
 ## Download and launch
 

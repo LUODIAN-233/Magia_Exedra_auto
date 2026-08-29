@@ -1271,6 +1271,42 @@ class LinkRaidRecoveryTests(unittest.TestCase):
         self.assertTrue(any(state[1] == 'back' for state in captured_states[1]))
 
 class ScalerManifestTests(unittest.TestCase):
+    def test_retired_official_template_is_removed_without_manifest(self):
+        with TemporaryDirectory() as temp_dir:
+            language_dir = Path(temp_dir) / 'language'
+            source_dir = language_dir / 'EN' / 'EN_2560x1440'
+            target_dir = language_dir / 'EN' / 'EN_1920x1080'
+            retired = Path('quests/link_raid/backup_requests/battle/love_1.png')
+            source_retired = source_dir / retired
+            target_retired = target_dir / retired
+            custom_target = target_dir / 'custom.png'
+            current_source = source_dir / 'current.png'
+            for path in (source_retired, target_retired, custom_target, current_source):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(path.name.encode('ascii'))
+
+            def generate(_source, target, _factor, _is_cancelled=None):
+                path = Path(target)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'generated')
+
+            with patch.object(image_scaler, 'LANGUAGE_DIR', str(language_dir)), \
+                    patch.object(image_scaler, '_run_magick', side_effect=generate):
+                generated, _skipped, notes = image_scaler.scale_pack(
+                    'EN', tool_fingerprint='test-tool',
+                )
+
+            manifest, status = image_scaler._load_manifest(str(target_dir))
+            self.assertEqual(generated, 1)
+            self.assertFalse(source_retired.exists())
+            self.assertFalse(target_retired.exists())
+            self.assertTrue(current_source.exists())
+            self.assertTrue(custom_target.exists())
+            self.assertTrue((target_dir / 'current.png').exists())
+            self.assertEqual(status, 'ok')
+            self.assertNotIn(retired.as_posix(), manifest)
+            self.assertTrue(any('清理退役模板 2 张' in note for note in notes))
+
     def test_failed_regeneration_preserves_old_manifest_record(self):
         with TemporaryDirectory() as temp_dir:
             language_dir = Path(temp_dir) / 'language'

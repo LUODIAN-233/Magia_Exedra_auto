@@ -44,6 +44,10 @@ SCALE_FACTORS = {
     "1920x1080": 0.75,
     "3840x2160": 1.5,
 }
+#升级自无安装清单的旧版本时，官方已删除模板可能同时残留在源 pack 和派生 pack。
+RETIRED_OFFICIAL_TEMPLATES = frozenset({
+    "quests/link_raid/backup_requests/battle/love_1.png",
+})
 
 
 def base_dir():
@@ -255,6 +259,37 @@ def _save_manifest(dst_dir, data):
             os.remove(temp_path)
 
 
+def _cleanup_retired_templates(lang_dir, lang):
+    """清理精确列入迁移清单的官方旧模板，不扩展到其它未登记文件。"""
+    removed = 0
+    notes = []
+    prefix = lang + "_"
+    for name in sorted(os.listdir(lang_dir)):
+        if not name.startswith(prefix):
+            continue
+        res = name[len(prefix):]
+        if res != SOURCE_RES and res not in SCALE_FACTORS:
+            continue
+        pack_dir = os.path.join(lang_dir, name)
+        if not os.path.isdir(pack_dir) or _is_reparse(pack_dir):
+            continue
+        for rel_key in RETIRED_OFFICIAL_TEMPLATES:
+            target = _safe_target_path(pack_dir, rel_key)
+            if target is None:
+                notes.append(f"拒绝清理不安全的退役模板 {lang} {res} {rel_key}")
+                continue
+            if not os.path.isfile(target):
+                continue
+            try:
+                os.remove(target)
+                removed += 1
+            except OSError as e:
+                notes.append(f"清理退役模板失败 {lang} {res} {rel_key}: {e}")
+    if removed:
+        notes.append(f"{lang} 清理退役模板 {removed} 张")
+    return notes
+
+
 #-----------对外功能-----------
 
 def scale_factor(res):
@@ -281,15 +316,15 @@ def scale_pack(lang, src_res=SOURCE_RES, progress_cb=None, is_cancelled=None, to
             or not os.path.isdir(lang_dir) or not os.path.isdir(src_dir) \
             or _is_reparse(lang_dir) or _is_reparse(src_dir):
         return 0, 0, [f"{lang} 没有安全可用的 {src_res} 源 pack，跳过"]
+    notes = _cleanup_retired_templates(lang_dir, lang)
     if tool_fingerprint is None:
         try:
             tool_fingerprint = _magick_fingerprint()
         except Exception as e:
-            return 0, 0, [f"无法确认 ImageMagick 工具链，跳过缩放: {e}"]
+            return 0, 0, notes + [f"无法确认 ImageMagick 工具链，跳过缩放: {e}"]
 
     generated = 0
     skipped = 0
-    notes = []
     for name in sorted(os.listdir(lang_dir)):
         if is_cancelled and is_cancelled():
             notes.append(f"{lang} 素材缩放已取消")

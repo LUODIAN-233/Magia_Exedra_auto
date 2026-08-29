@@ -6,7 +6,7 @@
     <img alt="Platform" src="https://img.shields.io/badge/プラットフォーム-Windows-0078D4">
     <img alt="Architecture" src="https://img.shields.io/badge/アーキテクチャ-x86--64-555555">
     <img alt="GUI" src="https://img.shields.io/badge/GUI-PySide6-41CD52">
-    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.5.1" src="https://img.shields.io/badge/Release-2.5.1-2ea44f"></a>
+    <a href="https://github.com/LUODIAN-233/Magia_Exedra_auto/releases"><img alt="Release 2.5.2" src="https://img.shields.io/badge/Release-2.5.2-2ea44f"></a>
   </p>
   <p>
     <a href="./README.md">简体中文</a> · <a href="./README_EN.md">English</a> · <a href="./README_JP.md">日本語</a>
@@ -15,12 +15,9 @@
 
 ---
 
-## 2.5.1 の変更点
+## 2.5.2 の変更点
 
-- 特定の Windows Defender ルールで検出された 2.5.0 build を置き換えるため、Windows 配布 package を再構築して検証しました。package 内の EXE は現在の Defender 定義による直接スキャンに合格しています。
-- Link Raid で複数レベルを選択し、ユーザーが設定した優先順位で部屋を検索できます。9/10 と 10/10 は個別にスキップを設定でき、参加人数を読み取れない部屋は参加を試みます。
-- 自動周回モードと各モードの全パラメータを変更時に保存し、次回起動時に復元します。Link Raid から不要になった「いいね」操作を削除しました。
-- Server酱 の重大イベント通知を追加し、専用 SendKey、1～2個の配信チャネル、イベントごとの設定に対応しました。バックグラウンド送信は再試行と重複排除を行い、手動停止やアプリ終了では自動終了通知を送信しません。
+- 旧インストールに削除済みの `love_1.png` が残り、テンプレート信頼度の検証に失敗して自動周回を開始できない問題を修正しました。テンプレート更新時に、この廃止ファイルの正確なパスだけをソース pack と派生 pack から削除し、それ以外の未登録ファイルは保持します。
 
 ## ダウンロードと起動
 

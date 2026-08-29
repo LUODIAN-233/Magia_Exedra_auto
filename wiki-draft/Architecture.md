@@ -151,7 +151,7 @@ Parses and hot-reloads `resource/template_confidence.txt`. The highest-scoring c
 
 ### image_scaler.py
 
-Uses ImageMagick Triangle filtering to derive 720p/1080p/4K packs from each 2560x1440 source. The current recipe is version 2, which invalidates output from older recipes. Skip requires matching source SHA-256, recipe/tool fingerprint, and target SHA-256. Cleanup removes only files managed by a valid old manifest.
+Uses ImageMagick Triangle filtering to derive 720p/1080p/4K packs from each 2560x1440 source. The current recipe is version 2, which invalidates output from older recipes. Skip requires matching source SHA-256, recipe/tool fingerprint, and target SHA-256. Cleanup normally removes only files managed by a valid old manifest. Exact paths in the retired-official-template migration list are removed from source and derived packs even when an old manifest is missing, while unrelated untracked files remain untouched.
 
 ### file_lock.py
 
