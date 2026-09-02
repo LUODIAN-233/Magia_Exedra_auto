@@ -40,8 +40,9 @@ Language: [简体中文](./首页) · [English](./Home_EN) · [日本語](./ホ�
 ## GUI parameters
 
 - GUI parameters are registry-driven; there are no module-level parameter globals
-- `ParamSpec.kind` supports `choice`, `lp_recover`, and `int`
-- `required_templates` paths may contain placeholders such as `{level_choice}`, but each placeholder name must match a declared `ParamSpec.key` for that worker
+- `ParamSpec.kind` supports `choice`, `ordered_multi_choice`, `bool`, `lp_recover`, and `int`; every new kind must also normalize persisted values
+- All registered parameters are saved immediately and atomically per stable `WorkerMeta.name`; `lp_recover` stores the visible GUI value and ordered multi-choice stores a non-empty duplicate-free priority list
+- `required_templates` paths may contain dynamic placeholders, but each placeholder name must match a declared `ParamSpec.key` for that worker
 - To add a new control type, add a `kind` in `registry.py` and a corresponding branch in `main.py`'s `_build_param_widget`
 
 ## Adding a new farming mode
@@ -52,6 +53,10 @@ Language: [简体中文](./首页) · [English](./Home_EN) · [日本語](./ホ�
 4. The `main.py` GUI will automatically show the corresponding button and parameter controls; no GUI code changes needed
 
 The worker must be no-argument-constructible and must route `run()` through `_run_safely()`.
+
+GUI stop actions and application close must call `worker.stop()`, never `_finish()` directly, so manual stops are not misreported as automatic termination. `_emit_major_event()` records that the run already has a major event; `_run_safely()` adds `worker_auto_ended` only for a non-manual end with no other major event.
+
+Server酱 channel settings always allow one or two entries. The GUI blocks a third selection, while `app_settings` must still truncate stale or manually edited over-limit values at the persistence boundary.
 
 ## User-input protection and wait recovery
 
@@ -78,7 +83,8 @@ The game window title is hardcoded as `MadokaExedra`. Changing it requires updat
 
 ## Git and local artifacts
 
-- `.gitignore` ignores `aim/`, `language/active.json`, root `settings.json`, `__pycache__/`, `*.pyc`, and `logs/`
+- `.gitignore` ignores `aim/`, `language/active.json`, root `settings.json`, `USER_REQUIREMENTS.txt`, `__pycache__/`, `*.pyc`, and `logs/`
+- A Server酱 SendKey may exist only in local `settings.json`; never place it in logs, exception text, test fixtures, the requirements ledger, documentation, or release artifacts
 - `.gitignore` also ignores derived PNGs, `.source_hashes.json`, `.release-venv-*/`, `build/`, `dist/`, and generated `*.spec` files; committed `.gitkeep` pack placeholders remain tracked
 - `tools/ImageMagick/` is committed and required by release packages
 - The repository has `main`, `beta`, and potentially other branches. Never infer target branch or release channel from the current branch alone

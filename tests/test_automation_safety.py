@@ -147,11 +147,13 @@ class ClickConfirmationTests(unittest.TestCase):
 
             def __init__(self):
                 self.logs = []
+                self.waits = []
 
             def _running(self):
                 return True
 
-            def _wait(self, _seconds):
+            def _wait(self, seconds):
+                self.waits.append(seconds)
                 return False
 
             def _wait_for_user_idle(self):
@@ -178,6 +180,7 @@ class ClickConfirmationTests(unittest.TestCase):
         self.assertIn('已点击模板 item', worker.logs[0][0])
         self.assertIn('置信度 0.9500，阈值 0.8000', worker.logs[0][0])
         self.assertEqual(worker.logs[0][1], 'INFO')
+        self.assertEqual(worker.waits, [0.3, 0.3, 0.2])
 
 
 class CrystalisFlowTests(unittest.TestCase):

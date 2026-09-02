@@ -121,6 +121,11 @@ class CrystalisWorker(BaseWorker):
             if check_win == 1 and self._wait(0.5):
                 return
         if check_win == 1 and self._running():
+            self._emit_major_event(
+                'timeout',
+                '等待晶花战斗结束超时。',
+                {'超时秒数': BATTLE_TIMEOUT},
+            )
             self._emit_log('等待晶花战斗结束超时，已安全停止。', 'ERROR')
             self._finish()
 
@@ -137,6 +142,11 @@ class CrystalisWorker(BaseWorker):
             self.lp_recover = self.lp_recover - 1
             self.signal.emit(str(f'体力用完了，剩余体力恢复次数还是{self.lp_recover}'))
             if self.lp_recover == 0:
+                self._emit_major_event(
+                    'lp_exhausted',
+                    '晶花体力恢复次数已耗尽。',
+                    {'设定恢复次数': self.lp_recover_times - 1},
+                )
                 self._finish()
                 return
 

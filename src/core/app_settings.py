@@ -9,6 +9,16 @@ logger = logging.getLogger(__name__)
 
 GUI_LOG_LEVELS = ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
 DEFAULT_LOG_RETENTION_DAYS = 7
+SERVERCHAN_CHANNEL_IDS = (9, 0, 66, 1, 2, 3, 8, 18, 98, 88)
+MAX_SERVERCHAN_CHANNELS = 2
+NOTIFICATION_EVENT_KEYS = (
+    'worker_auto_ended',
+    'lp_exhausted',
+    'timeout',
+    'worker_exception',
+    'update_failed',
+    'update_recovery_blocked',
+)
 
 
 def _base_dir():
@@ -96,4 +106,86 @@ def save_automation_mode(mode):
         return False
     data = _read_settings()
     data['automation_mode'] = mode
+    return _write_settings(data)
+
+
+def load_worker_params(worker_name):
+    if not isinstance(worker_name, str) or not worker_name:
+        return {}
+    all_params = _read_settings().get('worker_params')
+    if not isinstance(all_params, dict):
+        return {}
+    params = all_params.get(worker_name)
+    return dict(params) if isinstance(params, dict) else {}
+
+
+def _json_setting_value(value):
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return True
+    if isinstance(value, list):
+        return all(_json_setting_value(item) for item in value)
+    if isinstance(value, dict):
+        return all(isinstance(key, str) and _json_setting_value(item)
+                   for key, item in value.items())
+    return False
+
+
+def save_worker_params(worker_name, params):
+    if not isinstance(worker_name, str) or not worker_name or len(worker_name) > 64 \
+            or not isinstance(params, dict) \
+            or not all(isinstance(key, str) and key and _json_setting_value(value)
+                       for key, value in params.items()):
+        return False
+    data = _read_settings()
+    all_params = data.get('worker_params')
+    if not isinstance(all_params, dict):
+        all_params = {}
+    all_params[worker_name] = dict(params)
+    data['worker_params'] = all_params
+    return _write_settings(data)
+
+
+def normalize_notification_settings(value):
+    source = value if isinstance(value, dict) else {}
+    send_key = source.get('send_key', '')
+    if not isinstance(send_key, str) or len(send_key) > 256 \
+            or any(ord(char) < 32 for char in send_key):
+        send_key = ''
+
+    raw_channels = source.get('channels', [9])
+    channels = []
+    if isinstance(raw_channels, (list, tuple)):
+        for channel in raw_channels:
+            if isinstance(channel, int) and not isinstance(channel, bool) \
+                    and channel in SERVERCHAN_CHANNEL_IDS and channel not in channels:
+                channels.append(channel)
+                if len(channels) >= MAX_SERVERCHAN_CHANNELS:
+                    break
+    if not channels:
+        channels = [9]
+
+    raw_events = source.get('events')
+    raw_events = raw_events if isinstance(raw_events, dict) else {}
+    events = {
+        key: raw_events.get(key) if isinstance(raw_events.get(key), bool) else True
+        for key in NOTIFICATION_EVENT_KEYS
+    }
+    return {
+        'enabled': source.get('enabled') if isinstance(source.get('enabled'), bool) else False,
+        'send_key': send_key,
+        'channels': channels,
+        'events': events,
+    }
+
+
+def load_notification_settings():
+    return normalize_notification_settings(_read_settings().get('notifications'))
+
+
+def save_notification_settings(settings):
+    if not isinstance(settings, dict):
+        return False
+    normalized = normalize_notification_settings(settings)
+    data = _read_settings()
+    data['notifications'] = normalized
     return _write_settings(data)

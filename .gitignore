@@ -12,6 +12,9 @@ language/active.json
 #GUI 偏好设置（如日志等级），每台机器独立保存
 settings.json
 
+#本地需求台账：只记录未完成需求和用户已确认选择，不入库
+USER_REQUIREMENTS.txt
+
 #运行时滚动日志，由 src/core/log_setup.py 写入，不入库
 logs/
 
